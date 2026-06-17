@@ -1,0 +1,30 @@
+# ── Build outputs ──
+**/build/
+*.apk
+*.aab
+/android/app/release/
+/android/app/debug/
+.gradle/
+**/.gradle/
+.kotlin/
+**/.kotlin/
+.cxx/
+.externalNativeBuild/
+/captures/
+
+# ── IDE ──
+.idea/
+*.iml
+
+# ── Local / SDK config ──
+local.properties
+**/local.properties
+
+# ── Signing keys — DO NOT COMMIT (public repo) ──
+/keystore/
+*.jks
+*.keystore
+
+# ── OS ──
+.DS_Store
+Thumbs.db

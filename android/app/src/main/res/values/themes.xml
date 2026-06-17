@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  res/values/themes.xml 에 두세요.
+
+  Spotify 풍 다크 테마.
+  핵심: parent 가 *.NoActionBar  → 상단 "HelloRecorder" 타이틀바가 사라져
+        맨 위 버튼이 가려지지 않습니다. (코드에서 상태 표시줄을 직접 그림)
+        상태바/내비게이션바도 near-black 으로 칠합니다.
+-->
+<resources>
+
+    <!-- 색상 토큰 (Theme.kt 의 색과 동일) -->
+    <color name="sp_bg">#121212</color>
+    <color name="sp_surface">#181818</color>
+    <color name="sp_surface_alt">#1F1F1F</color>
+    <color name="sp_accent">#5A61E0</color>
+    <color name="sp_text">#FFFFFF</color>
+    <color name="sp_text_muted">#B3B3B3</color>
+    <color name="sp_text_faint">#7C7C7C</color>
+    <color name="sp_splash_bg">#4750D8</color>
+
+    <style name="Theme.HelloRecorder" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/sp_accent</item>
+        <item name="colorPrimaryDark">@color/sp_bg</item>
+        <item name="colorAccent">@color/sp_accent</item>
+
+        <item name="android:windowBackground">@color/sp_bg</item>
+        <item name="android:colorBackground">@color/sp_bg</item>
+
+        <item name="android:textColorPrimary">@color/sp_text</item>
+        <item name="android:textColorSecondary">@color/sp_text_muted</item>
+        <item name="android:textColorHint">@color/sp_text_faint</item>
+
+        <item name="android:statusBarColor">@color/sp_bg</item>
+        <item name="android:navigationBarColor">@color/sp_bg</item>
+
+        <!-- 다이얼로그(삭제 확인·라벨 입력·시간/날짜 선택)도 다크로 -->
+        <item name="alertDialogTheme">@style/Theme.HelloRecorder.Dialog</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.HelloRecorder.Dialog</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.HelloRecorder.Dialog</item>
+    </style>
+
+    <!-- 시작(스플래시) 화면: 보라색 배경으로 깔아 흰 깜빡임 방지 -->
+    <style name="Theme.HelloRecorder.Splash" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/sp_splash_bg</item>
+        <item name="android:statusBarColor">@color/sp_splash_bg</item>
+        <item name="android:navigationBarColor">@color/sp_splash_bg</item>
+    </style>
+
+    <style name="Theme.HelloRecorder.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="colorPrimary">@color/sp_accent</item>
+        <item name="colorAccent">@color/sp_accent</item>
+        <item name="android:windowBackground">@color/sp_surface</item>
+        <item name="android:textColorPrimary">@color/sp_text</item>
+        <item name="android:textColorSecondary">@color/sp_text_muted</item>
+    </style>
+
+</resources>

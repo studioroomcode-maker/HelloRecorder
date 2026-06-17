@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8.0+ 적응형 아이콘. 전체 아트를 배경 비트맵으로 두고 런처가 모양(원/스퀘어클)으로 마스킹. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_bg" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>
