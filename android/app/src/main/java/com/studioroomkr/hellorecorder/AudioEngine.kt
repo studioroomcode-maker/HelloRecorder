@@ -538,10 +538,12 @@ class AudioEngine(
             // 보류: 프레임 사본 보관(원본 pcm 버퍼는 다음 루프에서 덮어쓰므로 복사 필수)
             pending.add(pcm.copyOf(len))
             pendingSamples += len
-            // 기준 길이는 매번 다시 읽어 설정 변경을 즉시 반영
-            val thresholdMs = Prefs.getMinKeepSec(context) * 1000L
+            // 기준 길이는 매번 다시 읽어 설정 변경을 즉시 반영.
+            // 화면 길이 표시가 초 내림(floor)이라, 'N초 이하로 보이는' 구간(=실제 (N+1)초 미만)은
+            // 모두 버린다. 즉 (N+1)초 이상 모인 순간에만 인코딩을 시작해 최소 표시가 (N+1)초가 되게 한다.
+            val keepMs = (Prefs.getMinKeepSec(context) + 1) * 1000L
             val pendingMs = pendingSamples * 1000L / SAMPLE_RATE
-            if (pendingMs > thresholdMs) promote()
+            if (pendingMs >= keepMs) promote()
         }
 
         /** 보류 버퍼가 기준을 넘김 → 인코더 생성 후 모아둔 프레임을 흘려보낸다. */

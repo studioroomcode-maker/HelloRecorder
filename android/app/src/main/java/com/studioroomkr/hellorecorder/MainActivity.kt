@@ -441,7 +441,10 @@ class MainActivity : AppCompatActivity() {
             })
         })
         refreshMinKeep()
-        c.addView(Theme.hint(this, "설정한 길이 이하의 짧은 녹음(기침·문 닫는 소리 같은 잡음)을 저장하지 않습니다. 기준을 넘기 전까진 인코딩을 보류했다가 넘는 순간에만 저장하므로, 짧은 잡음은 인코딩 자체를 건너뛰어 배터리·발열도 줄어듭니다. 기본은 켜짐(5초)이며, 끄면 짧은 녹음도 모두 즉시 저장합니다."))
+        c.addView(Theme.hint(this, "설정한 길이 이하의 짧은 녹음(기침·문 닫는 소리 같은 잡음)을 저장하지 않습니다. 화면에 ‘N초’로 보이는 것까지(예: 5초면 0:05) 모두 버리고, 그보다 긴 것만 저장합니다. 기준을 넘기 전까진 인코딩을 보류했다가 넘는 순간에만 저장하므로 배터리·발열도 줄어듭니다. 기본은 켜짐(5초)이며, 끄면 짧은 녹음도 모두 즉시 저장합니다."))
+        // 기존에 저장된 짧은 파일 일괄 정리 (이 설정은 새 녹음에만 적용되므로 옛 파일은 따로 청소)
+        c.addView(Theme.outlineButton(this, "기존 짧은 녹음 정리") { cleanupShortRecordings() })
+        c.addView(Theme.hint(this, "지금까지 저장된 파일 중 위 기준보다 짧은 녹음을 한 번에 삭제합니다(보관 표시한 파일은 제외). 짧은 녹음 자동 삭제는 새로 녹음되는 파일에만 적용되므로, 이전 파일은 이 버튼으로 정리하세요."))
     }
 
     // ───────────────────────── 섹션: 녹음 시간대 (알람식) ─────────────────────────
@@ -1529,7 +1532,41 @@ class MainActivity : AppCompatActivity() {
                 applyArrow()
             }
             applyArrow()
-            fileListContainer.addView(header)
+
+            // 날짜 헤더 행: [그날 전체 선택] + [날짜 헤더(탭=접기/펼치기)] + [그날 전체 보관]
+            val dayKeys = files.map { Storage.relativeKey(this, it) }
+            val headerRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            headerRow.addView(Theme.checkBox(this, "").apply {
+                // 그날 파일이 모두 선택돼 있으면 체크 상태로 표시
+                isChecked = dayKeys.isNotEmpty() && selectedKeys.containsAll(dayKeys)
+                setOnClickListener {
+                    if (isChecked) selectedKeys.addAll(dayKeys)
+                    else selectedKeys.removeAll(dayKeys.toSet())
+                    refreshFileList()
+                }
+            })
+            header.layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
+            headerRow.addView(header)
+            // 그날 전체 보관(자동 삭제 제외) 토글 — 모두 보관돼 있으면 체크 상태
+            headerRow.addView(Theme.checkBox(this, "보관").apply {
+                isChecked = dayKeys.isNotEmpty() && dayKeys.all { Prefs.isProtected(this@MainActivity, it) }
+                setOnClickListener {
+                    val on = isChecked
+                    for (k in dayKeys) Prefs.setProtected(this@MainActivity, k, on)
+                    refreshFileList()
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (on) I18n.f("%d개 보관됨", dayKeys.size) else I18n.f("%d개 보관 해제됨", dayKeys.size),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            })
+            fileListContainer.addView(headerRow)
             fileListContainer.addView(dayGroup)
         }
         // 더 이상 보이지 않는 선택 항목 정리
@@ -1578,6 +1615,38 @@ class MainActivity : AppCompatActivity() {
                 selectedKeys.clear()
                 refreshFileList()
                 Toast.makeText(this, I18n.f("%d개 삭제됨", files.size), Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(I18n.t("취소"), null)
+            .show()
+    }
+
+    /** 기존에 저장된 짧은 녹음(기준보다 짧은 파일)을 한 번에 삭제. 보관 파일·길이 미상 파일은 제외. */
+    private fun cleanupShortRecordings() {
+        // A 와 동일 기준: 화면에 'N초'로 보이는 것까지(=실제 (N+1)초 미만) 짧은 것으로 본다.
+        val cutoffMs = (Prefs.getMinKeepSec(this) + 1) * 1000L
+        val candidates = Storage.listAllFiles(this).filter { f ->
+            val key = Storage.relativeKey(this, f)
+            if (Prefs.isProtected(this, key)) return@filter false
+            val d = durationMs(f)
+            d in 1 until cutoffMs   // 0(=길이 못 읽음/녹음 중)은 건드리지 않음
+        }
+        if (candidates.isEmpty()) {
+            Toast.makeText(this, I18n.t("정리할 짧은 녹음이 없습니다"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(I18n.t("기존 짧은 녹음 정리"))
+            .setMessage(I18n.f("기준보다 짧은 녹음 %d개를 삭제할까요? (보관 파일 제외)", candidates.size))
+            .setPositiveButton(I18n.t("삭제")) { _, _ ->
+                stopInlinePlay()
+                for (f in candidates) {
+                    val key = Storage.relativeKey(this, f)
+                    f.delete()
+                    Prefs.setProtected(this, key, false)
+                    Prefs.removeLabel(this, key)
+                }
+                refreshFileList()
+                Toast.makeText(this, I18n.f("%d개 삭제됨", candidates.size), Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton(I18n.t("취소"), null)
             .show()
