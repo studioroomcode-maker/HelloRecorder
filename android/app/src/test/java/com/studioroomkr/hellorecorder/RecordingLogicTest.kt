@@ -113,6 +113,18 @@ class RecordingLogicTest {
         assertEquals(1.0, RecordingLogic.proximityGain(500.0, 0.0, floor), 1e-9)  // threshold 0 가드
     }
 
+    // ── needsTranscript: 자동 전사 대상 판정 ──
+    @Test fun transcript_skips_done_and_recent_files() {
+        val now = 1_000_000L
+        val guard = 120_000L
+        // 전사물 없음 + 가드 지난 파일 → 대상
+        assertEquals(true, RecordingLogic.needsTranscript(false, now - guard, now, guard))
+        // 이미 전사됨 → 제외
+        assertEquals(false, RecordingLogic.needsTranscript(true, now - guard, now, guard))
+        // 최근 수정(녹음 중일 수 있음) → 제외
+        assertEquals(false, RecordingLogic.needsTranscript(false, now - guard + 1, now, guard))
+    }
+
     // ── proximityThreshold: 적응 임계(최근 가까운 소리 피크 추종 + 하한) ──
     @Test fun proximity_threshold_follows_recent_peak() {
         // 큰 목소리(피크 10000) 기준 → 임계는 그 35%

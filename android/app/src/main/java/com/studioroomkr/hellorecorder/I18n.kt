@@ -84,6 +84,11 @@ object I18n {
         "정밀 음성 확인(Silero)·목소리 강조(신경망 잡음 제거)·먼 소리 줄이기는 Pro 전용입니다. ‘사람 목소리 우선’은 무료로 쓸 수 있어요." to
             "Precise voice check (Silero), voice enhancement (neural noise removal) and distant-sound reduction are Pro. 'Human-voice priority' is free to use.",
         "먼 소리 줄이기" to "Reduce distant sounds",
+        "자동 전사 (충전 중)" to "Auto transcription (while charging)",
+        "녹음을 기기 안에서 텍스트로 바꿔 나중에 말로 찾을 수 있게 합니다(외부 전송 없음). 충전 중 + 배터리 여유일 때만 돌아 배터리를 쓰지 않습니다. 지금까지 전사된 파일: %d개" to
+            "Converts recordings to text on-device so you can search by what was said (nothing leaves your phone). Runs only while charging with enough battery, so it uses no battery in daily use. Files transcribed so far: %d",
+        "음성 인식 모델이 아직 설치되지 않아 대기 상태입니다. 모델 다운로드 기능은 준비 중입니다(현재는 개발자 설치 전용)." to
+            "The speech-recognition model is not installed yet, so this is on standby. In-app model download is coming (developer install only for now).",
         "잡음 제거 없이 멀리 있는(약한) 소리만 자연스럽게 낮춥니다. 원음 질감이 그대로라 ‘목소리 강조’가 부담스러우면 이 옵션만 켜 보세요. ‘사람 목소리 우선’과 함께 쓸 수 있으며, 다음 녹음 구간부터 적용됩니다." to
             "Naturally lowers distant (weak) sounds without noise removal. The original tone is preserved — if 'voice enhancement' sounds too processed, try this alone. Works together with 'human-voice priority'; applies from the next recording segment.",
         "정밀 확인·목소리 강조는 Pro" to "Precise check & enhancement — Pro",

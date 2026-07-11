@@ -67,6 +67,9 @@ object Storage {
         return file.absolutePath.removePrefix("$root/")
     }
 
+    /** relativeKey 의 역변환 — 검색 인덱스 등 키로 저장된 항목에서 파일 복원. */
+    fun fileForKey(ctx: Context, key: String): File = File(rootDir(ctx), key)
+
     /** 내부저장소 남은 공간 (바이트) */
     fun freeBytes(ctx: Context): Long = rootDir(ctx).usableSpace
 

@@ -27,6 +27,9 @@ local.properties
 keystore.properties
 **/keystore.properties
 
+# ── STT 모델 원본 (수백 MB — 기기 push 용, 저장소에 넣지 않음) ──
+/models/
+
 # ── OS ──
 .DS_Store
 Thumbs.db

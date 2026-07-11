@@ -30,6 +30,7 @@ class BootReceiver : BroadcastReceiver() {
             }
         }
         CleanupWorker.schedule(context)
+        TranscribeWorker.schedule(context)
     }
 
     /** 부팅 후 재개를 유도하는 알림. 탭하면 MainActivity 가 전경에서 녹음을 다시 시작한다. */

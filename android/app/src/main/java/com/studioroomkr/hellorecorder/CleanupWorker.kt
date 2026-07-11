@@ -31,6 +31,7 @@ class CleanupWorker(
             if (RecordingLogic.isExpired(file.lastModified(), now, retentionHours, protectedSet.contains(key))) {
                 file.delete()
                 Storage.profileFile(file).delete()   // 활동 프로필 사이드카도 함께 정리
+                TranscriptStore.removeFor(ctx, file) // 전사 사이드카 + 검색 인덱스도 정리
             }
         }
 
@@ -39,6 +40,7 @@ class CleanupWorker(
 
         // 어떤 삭제 경로(수동 삭제 등)도 놓친 짝 잃은 사이드카 정리
         Storage.sweepOrphanProfiles(ctx)
+        TranscriptStore.sweepOrphans(ctx)
 
         // 빈 날짜 폴더 제거
         Storage.listDayDirs(ctx).forEach { dir ->

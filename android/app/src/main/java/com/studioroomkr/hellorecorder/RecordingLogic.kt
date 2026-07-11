@@ -78,4 +78,11 @@ object RecordingLogic {
      */
     fun proximityThreshold(ref: Double, ratio: Double, minThreshold: Double): Double =
         maxOf(minThreshold, ref * ratio)
+
+    /**
+     * 자동 전사 대상인지. 이미 전사물이 있으면 제외하고, 최근 guardMs 안에 수정된 파일은
+     * 아직 녹음(추가 기록) 중일 수 있어 제외한다 — 다음 주기에서 자연히 잡힌다.
+     */
+    fun needsTranscript(hasTranscript: Boolean, lastModifiedMs: Long, nowMs: Long, guardMs: Long): Boolean =
+        !hasTranscript && nowMs - lastModifiedMs >= guardMs
 }

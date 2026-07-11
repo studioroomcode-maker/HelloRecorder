@@ -40,6 +40,7 @@ object Prefs {
     private const val KEY_SILERO = "silero_confirm"
     private const val KEY_VOICE_EMPHASIS = "voice_emphasis"
     private const val KEY_DISTANCE_REDUCE = "distance_reduce"
+    private const val KEY_TRANSCRIBE = "auto_transcribe"
     // 알람식 스케줄: 요일별(dow_0..6) + 특정 날짜(date_yyyymmdd) 오버라이드
     //   각 항목: _en(켜짐), _s(시작 분, 0~1439), _e(끝 분, 0~1439)
     //   시작==끝 → 24시간 녹음 / 시작<끝 → [s,e) / 시작>끝 → 자정 넘김
@@ -389,6 +390,15 @@ object Prefs {
 
     fun setDistanceReduceEnabled(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_DISTANCE_REDUCE, on).apply()
+    }
+
+    // 자동 전사 (Pro). 충전 중에만 배치로 녹음을 텍스트로 바꿔 검색을 가능하게 한다.
+    // STT 모델(별도 다운로드) 이 있어야 실제로 동작. 기본 꺼짐.
+    fun isTranscribeEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_TRANSCRIBE, false)
+
+    fun setTranscribeEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_TRANSCRIBE, on).apply()
     }
 
     // ---- 자동 삭제 보관 기간 (시간) ----

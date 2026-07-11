@@ -67,9 +67,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    // STT 스파이크: sherpa-onnx AAR 이 자체 libonnxruntime.so 를 번들하는데, 앱은 이미
+    // sherpa-onnx(STT) AAR 이 자체 libonnxruntime.so 를 번들하는데, 앱은 이미
     // com.microsoft.onnxruntime:onnxruntime-android 의 libonnxruntime.so 를 쓴다 → 중복.
-    // pickFirst 로 하나만 패키징(둘 다 onnxruntime 빌드라 호환). debug 빌드에만 sherpa 가 붙는다.
+    // pickFirst 로 하나만 패키징(둘 다 onnxruntime 빌드라 호환).
     packaging {
         jniLibs {
             pickFirsts += "**/libonnxruntime.so"
@@ -95,12 +95,13 @@ dependencies {
     implementation("com.github.gkonovalov.android-vad:silero:2.0.10")   // Silero VAD(ONNX) — 2차 정밀 확인
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")  // GTCRN 음성향상 직접 추론
 
-    // STT 타당성 스파이크(온디바이스 한국어 전사) — debug 빌드 전용. 릴리스에는 포함되지 않음.
-    // 모델/실측은 별도(앱이 16kHz 모노로 녹음 → sherpa-onnx OnlineRecognizer 로 배치 전사).
+    // sherpa-onnx: 온디바이스 한국어 STT(자동 전사 — v2 핵심 기능). 실기기 실측으로 확정
+    // (S25U: RTF 0.035, 근접 CER≈0%). AAR 이 ABI당 ~14MB 라 릴리스 크기가 늘지만
+    // AAB 분할 전달로 기기당 1개 ABI 만 내려간다. 모델(~127MB)은 번들하지 않고 별도 다운로드.
     //
     // group 을 반드시 채워야 한다. 빈 문자열이면 릴리스 빌드의 lintVital 이
     // GradleDetector 에서 group 을 파일 경로로 변환하다 InvalidPathException 으로 죽어
     // `./gradlew :app:bundleRelease` 자체가 실패한다. flatDir 은 group 을 무시하고
     // 이름·버전·확장자로만 찾으므로, 아무 이름이나 채워도 해석 결과는 같다.
-    debugImplementation(group = "sherpa", name = "sherpa-onnx-1.13.3", ext = "aar")
+    implementation(group = "sherpa", name = "sherpa-onnx-1.13.3", ext = "aar")
 }
