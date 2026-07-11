@@ -9,6 +9,7 @@ import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
@@ -51,16 +52,25 @@ object Pro {
         appCtx = ctx.applicationContext
         isPro = Prefs.isPro(appCtx)   // 캐시값 먼저 반영
         if (forcePro) setPro(true)
-        connect()
+        // BillingClient 는 한 번만 만든다. App(프로세스 시작)·MainActivity·ProActivity 가
+        // 각각 init 을 부를 수 있어, 이미 만들었으면 재구축하지 않고 구매만 다시 조회한다.
+        if (billing == null) connect() else restore()
     }
 
     private fun connect() {
         if (billing?.isReady == true) {
             queryProduct(); restore(); return
         }
-        @Suppress("DEPRECATION")
         billing = BillingClient.newBuilder(appCtx)
-            .enablePendingPurchases()
+            // Billing 8: 무인자 enablePendingPurchases() 는 제거됨. 어떤 상품 유형에
+            // 보류 결제를 허용할지 명시해야 한다. 우리 상품은 1회성(비소비) 하나뿐.
+            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .build()
+            )
+            // 서비스가 끊기면 라이브러리가 알아서 다시 붙는다(직접 재연결 로직 불필요).
+            .enableAutoServiceReconnection()
             .setListener(purchasesUpdated)
             .build()
         billing?.startConnection(object : BillingClientStateListener {
@@ -69,7 +79,7 @@ object Pro {
                     queryProduct(); restore()
                 }
             }
-            override fun onBillingServiceDisconnected() { /* 다음 호출 시 재연결 */ }
+            override fun onBillingServiceDisconnected() { /* enableAutoServiceReconnection 이 처리 */ }
         })
     }
 
@@ -83,8 +93,9 @@ object Pro {
                         .build()
                 )
             ).build()
-        billing?.queryProductDetailsAsync(params) { _, list ->
-            productDetails = list.firstOrNull()
+        // Billing 8: 콜백 2번째 인자가 List<ProductDetails> → QueryProductDetailsResult 로 바뀜.
+        billing?.queryProductDetailsAsync(params) { _, result ->
+            productDetails = result.productDetailsList.firstOrNull()
         }
     }
 

@@ -58,9 +58,11 @@ class RecordingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundCompat() {
+        // 정책(감시앱) 준수: 프라이버시 모드여도 '녹음 중'임을 알림에서 숨기지 않는다.
+        // 프라이버시 모드는 화면 캡처 차단·최근앱 가림만 담당하며, 지속 알림은 항상 녹음을 명시한다.
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (Prefs.isPrivacyMode(this)) I18n.t("서비스 실행 중") else I18n.t("녹음 중"))
-            .setContentText(if (Prefs.isPrivacyMode(this)) "" else I18n.t("소리가 감지될 때만 저장됩니다"))
+            .setContentTitle(I18n.t("녹음 중"))
+            .setContentText(I18n.t("소리가 감지될 때만 저장됩니다"))
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -91,13 +93,26 @@ class RecordingService : Service() {
         private const val CHANNEL_ID = "recording_channel"
         private const val NOTIF_ID = 1001
 
+        /**
+         * 녹음 서비스 시작. **전경(Activity)에서 호출해야 한다.**
+         *
+         * Android 12+ 는 백그라운드에서 startForegroundService() 를 부르면 호출 지점에서
+         * ForegroundServiceStartNotAllowedException 을 던진다. onStartCommand 의 try/catch 는
+         * 서비스 안쪽이라 여기까지 오지 못하므로, 호출 지점에서도 직접 잡아야 프로세스가 죽지 않는다.
+         * 실패하면 '녹음 켜짐' 플래그를 되돌려 UI/위젯이 거짓 상태를 보여주지 않게 한다.
+         */
         fun start(context: Context) {
             Prefs.setRecordingEnabled(context, true)
             val intent = Intent(context, RecordingService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (_: Exception) {
+                Prefs.setRecordingEnabled(context, false)
+                Prefs.setRecordingStartedAt(context, 0L)
             }
             RecorderWidget.updateAll(context)
         }

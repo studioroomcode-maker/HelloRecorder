@@ -48,4 +48,34 @@ object Share {
             }
         )
     }
+
+    /**
+     * 온디바이스 오류 로그(.txt)를 사용자가 직접 공유할 때 사용. 텍스트 MIME 으로 내보낸다.
+     * 사용자가 이 동작을 명시적으로 실행할 때만 로그가 기기 밖으로 나간다.
+     */
+    fun shareLogFiles(ctx: Context, files: List<File>) {
+        if (files.isEmpty()) return
+        val uris = ArrayList<android.net.Uri>()
+        for (f in files) {
+            uris.add(FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f))
+        }
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uris[0])
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "text/plain"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        ctx.startActivity(
+            Intent.createChooser(intent, I18n.t("오류 로그 공유")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+    }
 }

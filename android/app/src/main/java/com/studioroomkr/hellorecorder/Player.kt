@@ -16,23 +16,44 @@ object Player {
     private var currentPath: String? = null
     private var speed: Float = 1.0f
 
-    /** 재생 시작/정지 토글. 시작하면 true */
-    fun toggle(file: File, onComplete: () -> Unit): Boolean {
+    /** 재생 가능한 파일인지(존재 + 내용 있음). 잘린 녹음·삭제된 파일 걸러내기용. */
+    fun isPlayable(file: File): Boolean = file.exists() && file.length() > 0
+
+    /**
+     * 재생 시작/정지 토글. 시작하면 true.
+     *
+     * 손상·잘린·삭제된 파일에서 setDataSource/prepare 가 던지는 예외를 여기서 흡수한다.
+     * (강제 종료·배터리 방전으로 muxer 가 마무리하지 못한 파일이 실제로 생긴다.)
+     * onError 는 onComplete 앞에 둔다 — 후행 람다가 계속 onComplete 로 바인딩되도록.
+     */
+    fun toggle(file: File, onError: (() -> Unit)? = null, onComplete: () -> Unit): Boolean {
         if (currentPath == file.absolutePath && mp?.isPlaying == true) {
             stop()
             return false
         }
         stop()
-        mp = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            setOnCompletionListener {
+        if (!isPlayable(file)) {
+            onError?.invoke()
+            return false
+        }
+        val player = MediaPlayer()
+        try {
+            player.setDataSource(file.absolutePath)
+            player.setOnCompletionListener {
                 stop()
                 onComplete()
             }
-            prepare()
-            applySpeed(this)
-            start()
+            player.prepare()
+            applySpeed(player)
+            player.start()
+        } catch (_: Exception) {
+            try { player.release() } catch (_: Exception) {}
+            mp = null
+            currentPath = null
+            onError?.invoke()
+            return false
         }
+        mp = player
         currentPath = file.absolutePath
         return true
     }

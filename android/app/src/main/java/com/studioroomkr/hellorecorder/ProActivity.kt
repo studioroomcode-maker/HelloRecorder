@@ -97,6 +97,8 @@ class ProActivity : AppCompatActivity() {
     }
 
     private fun benefits(): List<String> = listOf(
+        "• 정밀 음성 확인 · 목소리 강조 (신경망)",
+        "• 먼 소리 줄이기 (근접 우선)",
         "• 녹음 시간대 예약 (요일/날짜)",
         "• 위치 기반 녹음 (다중 구역)",
         "• 캘린더 · 정렬",

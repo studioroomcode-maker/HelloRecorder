@@ -39,6 +39,7 @@ object Prefs {
     private const val KEY_VOICE_MODE = "voice_mode"
     private const val KEY_SILERO = "silero_confirm"
     private const val KEY_VOICE_EMPHASIS = "voice_emphasis"
+    private const val KEY_DISTANCE_REDUCE = "distance_reduce"
     // 알람식 스케줄: 요일별(dow_0..6) + 특정 날짜(date_yyyymmdd) 오버라이드
     //   각 항목: _en(켜짐), _s(시작 분, 0~1439), _e(끝 분, 0~1439)
     //   시작==끝 → 24시간 녹음 / 시작<끝 → [s,e) / 시작>끝 → 자정 넘김
@@ -56,6 +57,9 @@ object Prefs {
     // 녹음 상태 (엔진이 갱신)
     private const val KEY_CUR_LEVEL = "cur_level"
     private const val KEY_IS_CAPTURING = "is_capturing"
+    // 인코딩 실패(빈/깨진 녹음) 누적 — 사용자 가시화용
+    private const val KEY_ENCODE_FAIL_COUNT = "encode_fail_count"
+    private const val KEY_ENCODE_FAIL_LAST = "encode_fail_last"   // ms
     // 일별 배터리 소모 로그
     private const val BATT_PREFIX = "batt_"            // batt_yyyymmdd -> 누적 소모 %(Float)
     private const val KEY_BATT_LAST_LEVEL = "batt_last_level"
@@ -232,11 +236,8 @@ object Prefs {
         return inWindow(sched.startMin, sched.endMin, minute)
     }
 
-    private fun inWindow(startMin: Int, endMin: Int, minute: Int): Boolean {
-        if (startMin == endMin) return true          // 24시간
-        return if (startMin < endMin) minute in startMin until endMin
-        else minute >= startMin || minute < endMin   // 자정 넘김
-    }
+    private fun inWindow(startMin: Int, endMin: Int, minute: Int): Boolean =
+        RecordingLogic.inWindow(startMin, endMin, minute)
 
     // ---- 녹음 켜짐 상태 ----
     fun isRecordingEnabled(ctx: Context): Boolean =
@@ -354,8 +355,8 @@ object Prefs {
     }
 
     // ---- 사람 목소리 우선 모드 (음성 인식 기반 트리거) ----
-    // 켜면 음성에 튜닝된 소스 + AGC/노이즈서프레서 + 음성 대역 검출로,
-    // 작은 목소리도 더 잘 잡고 비음성 소음은 덜 잡는다.
+    // 켜면 음성 대역 검출 + VAD 로 녹음 트리거를 판단해,
+    // 작은 목소리도 더 잘 잡고 비음성 소음은 덜 잡는다. (저장 음질은 안 건드림)
     fun isVoiceModeEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_VOICE_MODE, false)
 
@@ -372,13 +373,22 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_SILERO, on).apply()
     }
 
-    // 목소리 강조 (켜면: AGC·노이즈억제·음성튜닝 마이크 + GTCRN 잡음 제거를 함께 적용).
+    // 목소리 강조 (켜면: 노이즈억제·음성튜닝 마이크 + GTCRN 잡음 제거를 함께 적용. AGC 미사용).
     // 끄면 원본 그대로 녹음. 저장 오디오를 가공하므로 기본 꺼짐.
     fun isVoiceEmphasisEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_VOICE_EMPHASIS, false)
 
     fun setVoiceEmphasisEnabled(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_VOICE_EMPHASIS, on).apply()
+    }
+
+    // 먼 소리 줄이기 (Pro). 잡음 제거 없이 근접 우선 익스팬더만 저장 오디오에 적용 —
+    // 원음 질감은 유지하면서 멀리 있는(약한) 소리만 낮춘다. 저장 오디오를 가공하므로 기본 꺼짐.
+    fun isDistanceReduceEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_DISTANCE_REDUCE, false)
+
+    fun setDistanceReduceEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DISTANCE_REDUCE, on).apply()
     }
 
     // ---- 자동 삭제 보관 기간 (시간) ----
@@ -481,6 +491,33 @@ object Prefs {
 
     fun isCapturing(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_IS_CAPTURING, false)
+
+    // ---- 인코딩 실패(빈/깨진 녹음) 기록 — 가시화용 ----
+    // 엔진이 인코딩/먹싱에 실패하거나 0바이트 파일을 만들면 호출한다. 엔진(백그라운드
+    // 스레드)과 UI 스레드가 함께 접근할 수 있어 read-modify-write 경합을 막으려 동기화.
+    @Synchronized
+    fun recordEncodeFailure(ctx: Context) {
+        val p = prefs(ctx)
+        p.edit()
+            .putInt(KEY_ENCODE_FAIL_COUNT, p.getInt(KEY_ENCODE_FAIL_COUNT, 0) + 1)
+            .putLong(KEY_ENCODE_FAIL_LAST, System.currentTimeMillis())
+            .apply()
+    }
+
+    fun getEncodeFailCount(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_ENCODE_FAIL_COUNT, 0)
+
+    fun getEncodeFailLast(ctx: Context): Long =
+        prefs(ctx).getLong(KEY_ENCODE_FAIL_LAST, 0L)
+
+    /** 사용자가 경고를 확인하면 호출(누적 초기화). */
+    @Synchronized
+    fun clearEncodeFailures(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(KEY_ENCODE_FAIL_COUNT)
+            .remove(KEY_ENCODE_FAIL_LAST)
+            .apply()
+    }
 
     // ---- 일별 배터리 소모 (기기 전체 기준 추정) ----
     //

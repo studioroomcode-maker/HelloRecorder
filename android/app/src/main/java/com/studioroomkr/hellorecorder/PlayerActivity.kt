@@ -31,6 +31,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var timeText: TextView
     private lateinit var playBtn: Button
     private lateinit var bookmarkContainer: LinearLayout
+    private lateinit var voiceNavLabel: TextView
+    private var voiceOnsets: List<Float> = emptyList()   // 발화 시작점(0..1 비율, 오름차순)
 
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
@@ -55,6 +57,12 @@ class PlayerActivity : AppCompatActivity() {
         val path = intent.getStringExtra(EXTRA_PATH)
         if (path == null) { finish(); return }
         file = File(path)
+        // 목록에서 넘어온 뒤 파일이 지워졌거나(자동 정리·다른 화면에서 삭제) 0바이트로 잘렸으면
+        // 파형·재생·잘라내기 어느 것도 의미가 없다. 안내하고 닫는다.
+        if (!Player.isPlayable(file)) {
+            Toast.makeText(this, I18n.t("재생할 수 없는 파일입니다"), Toast.LENGTH_SHORT).show()
+            finish(); return
+        }
         key = Storage.relativeKey(this, file)
 
         val root = LinearLayout(this).apply {
@@ -83,6 +91,7 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         playCard.addView(waveform)
+        playCard.addView(Theme.hint(this, "초록 막대 = 말소리 감지 · 막대를 탭하면 그 지점으로 이동"))
         waveform.load(file)
 
         seekBar = Theme.seekBar(this).apply {
@@ -97,10 +106,26 @@ class PlayerActivity : AppCompatActivity() {
         playCard.addView(seekBar)
 
         playBtn = Theme.primaryButton(this, "▶ 재생") {
-            Player.toggle(file) { /* 완료 시 tick 이 알아서 갱신 */ }
+            Player.toggle(file, onError = { showUnplayable() }) { /* 완료 시 tick 이 알아서 갱신 */ }
         }
         playCard.addView(playBtn)
         root.addView(playCard)
+
+        // 말소리 구간 빠른 이동 — 활동 프로필(.lvl)의 음성 시작점으로 점프
+        root.addView(Theme.sectionTitle(this, "말소리 구간"))
+        voiceNavLabel = Theme.body(this).apply { setTextColor(Theme.TEXT_MUTED) }
+        root.addView(voiceNavLabel)
+        val voiceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        voiceRow.addView(Theme.smallButton(this, "◀ 이전 발화") { jumpVoice(-1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(0, 8, 8, 8) }
+        })
+        voiceRow.addView(Theme.smallButton(this, "다음 발화 ▶") { jumpVoice(1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(8, 8, 0, 8) }
+        })
+        root.addView(voiceRow)
+        loadVoiceOnsets()
 
         // 재생 속도
         root.addView(Theme.sectionTitle(this, "재생 속도"))
@@ -197,12 +222,55 @@ class PlayerActivity : AppCompatActivity() {
         }
         Player.stop()  // 원본을 교체하기 전에 재생 중지
         if (file.delete() && tmp.renameTo(file)) {
+            // 잘라낸 결과는 길이가 달라져 옛 활동 프로필이 안 맞음 → 제거(파형은 디코드로 폴백)
+            Storage.profileFile(file).delete()
             waveform.load(file)   // 파형 다시 로드
             Toast.makeText(this, I18n.t("덮어쓰기 완료"), Toast.LENGTH_SHORT).show()
         } else {
             tmp.delete()
             Toast.makeText(this, I18n.t("덮어쓰기 실패"), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** 활동 프로필에서 발화 시작점을 비동기로 읽어 라벨/네비게이션 준비. */
+    private fun loadVoiceOnsets() {
+        voiceNavLabel.text = I18n.t("말소리 구간 분석 중…")
+        Thread {
+            val prof = Storage.readActivityProfile(file)
+            val list = if (prof != null) Storage.voiceOnsets(prof) else emptyList()
+            runOnUiThread {
+                voiceOnsets = list
+                voiceNavLabel.text = if (list.isNotEmpty()) {
+                    I18n.f("말소리 구간 %d개 — 버튼으로 이동", list.size)
+                } else {
+                    I18n.t("말소리 구간 정보 없음 (이전 녹음/음성 모드 꺼짐)")
+                }
+            }
+        }.start()
+    }
+
+    /** dir>0 다음 발화, dir<0 이전 발화로 점프. */
+    private fun jumpVoice(dir: Int) {
+        if (voiceOnsets.isEmpty()) {
+            Toast.makeText(this, I18n.t("말소리 구간 정보 없음 (이전 녹음/음성 모드 꺼짐)"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!Player.isLoaded(file)) Player.toggle(file) {}
+        val dur = Player.durationMs()
+        if (dur <= 0) return
+        val cur = Player.currentPositionMs().toFloat() / dur
+        val eps = 0.005f
+        val target = if (dir > 0) voiceOnsets.firstOrNull { it > cur + eps }
+        else voiceOnsets.lastOrNull { it < cur - eps }
+        if (target == null) {
+            Toast.makeText(
+                this,
+                I18n.t(if (dir > 0) "마지막 발화입니다" else "첫 발화입니다"),
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        Player.seekTo((target * dur).toLong())
     }
 
     private fun refreshBookmarks() {
@@ -231,6 +299,11 @@ class PlayerActivity : AppCompatActivity() {
             })
             bookmarkContainer.addView(row)
         }
+    }
+
+    /** 손상·삭제된 파일을 재생하려 할 때. 크래시 대신 안내한다. */
+    private fun showUnplayable() {
+        Toast.makeText(this, I18n.t("재생할 수 없는 파일입니다"), Toast.LENGTH_SHORT).show()
     }
 
     private fun fmt(ms: Long): String {

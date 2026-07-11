@@ -2,7 +2,7 @@
 
 **최종 업데이트: 2026-06-16**
 **개발자: Studioroom**
-**문의: studioroom.skb@gmail.com**
+**문의: contact@studioroomkr.com**
 
 > 이 문서는 구글 플레이 제출용 초안입니다. 공개 URL(예: GitHub Pages, 블로그, 노션 공개 페이지 등)에
 > 게시한 뒤 그 주소를 Play Console의 ‘개인정보처리방침 URL’ 에 입력하세요.
@@ -66,4 +66,4 @@ HelloRecorder(이하 "앱")는 사용자가 직접 자신의 음성·주변 소�
 - 본 방침은 변경될 수 있으며, 변경 시 본 페이지에 최종 업데이트 일자와 함께 게시합니다.
 
 ## 10. 문의
-- 이메일: studioroom.skb@gmail.com
+- 이메일: contact@studioroomkr.com

@@ -46,13 +46,17 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var fileListContainer: LinearLayout
     private lateinit var thresholdLabel: TextView
+    private var sensitivitySeek: android.widget.SeekBar? = null
     private lateinit var levelBar: ProgressBar
     private lateinit var statusText: TextView
     private lateinit var startTimeText: TextView
     private lateinit var recordToggleBtn: Button
     private var lastToggleEnabled: Boolean? = null
     private lateinit var contentRoot: View
+    private var warningCard: View? = null
+    private var warningText: TextView? = null
     private var batteryContainer: LinearLayout? = null
+    private var crashDiagBox: LinearLayout? = null
     private var locationZonesContainer: LinearLayout? = null
     private var pendingLocationAction: (() -> Unit)? = null
 
@@ -61,14 +65,19 @@ class MainActivity : AppCompatActivity() {
     private var lastBattSampleTs = 0L
     private val selectedKeys = HashSet<String>()
     private val shownKeys = ArrayList<String>()
-    private val durationCache = HashMap<String, String>()
+    private val durationCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var weekStripContainer: LinearLayout? = null
     private var weekAnchorMillis: Long = System.currentTimeMillis()
     private var selectedDateKey: String? = null   // null = 전체
     private var selectedCategory: String? = null  // null = 전체 카테고리
     private var categoryChips: LinearLayout? = null
     private var sortButton: Button? = null
-    private val durationMsCache = HashMap<String, Long>()
+    private val durationMsCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val tagCache = java.util.concurrent.ConcurrentHashMap<String, String>()   // 활동 태그(.lvl 집계)
+    // 파일 길이(메타데이터) 비동기 로딩 — 메인스레드를 막지 않게 백그라운드에서 읽어 행을 갱신
+    private val metaExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // 목록을 다시 그릴 때마다 증가 — 비동기 콜백이 옛 목록의 뷰를 갱신하지 않게 가드
+    private var listGeneration = 0
     // 목록 인라인 재생
     private var playingKey: String? = null
     private var playingFile: File? = null
@@ -99,9 +108,61 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 녹음 권한 요청 결과.
+     *
+     * 마이크와 알림을 따로 판정한다. 녹음에 반드시 필요한 것은 마이크뿐이고,
+     * 알림 권한이 없어도 포그라운드 서비스는 동작한다(상태 알림만 표시되지 않음).
+     * 예전처럼 result.values.all{} 로 묶으면 알림만 거부해도 녹음이 조용히 시작되지 않아,
+     * 사용자에겐 '버튼이 먹통'으로 보인다.
+     */
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-            if (result.values.all { it }) startRecording()
+            val micGranted = result[Manifest.permission.RECORD_AUDIO] ?: hasMicPermission()
+            if (!micGranted) {
+                // 거부 직후 rationale 이 false 면 '다시 묻지 않음' → 설정으로 보내야 한다.
+                if (shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+                    Toast.makeText(this, I18n.t("마이크 권한이 필요합니다"), Toast.LENGTH_SHORT).show()
+                } else {
+                    showPermissionSettingsDialog()
+                }
+                return@registerForActivityResult
+            }
+            startRecording()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                result[Manifest.permission.POST_NOTIFICATIONS] == false
+            ) {
+                Toast.makeText(
+                    this,
+                    I18n.t("알림 권한이 없어 녹음 중 상태 알림이 표시되지 않습니다"),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** 마이크 권한이 영구 거부된 상태 — 앱 안에서는 더 물어볼 수 없으므로 설정 화면으로 안내. */
+    private fun showPermissionSettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(I18n.t("마이크 권한이 필요합니다"))
+            .setMessage(I18n.t("녹음하려면 설정에서 마이크 권한을 허용해 주세요."))
+            .setPositiveButton(I18n.t("설정 열기")) { _, _ ->
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", packageName, null))
+                )
+            }
+            .setNegativeButton(I18n.t("취소"), null)
+            .show()
+    }
+
+    private val calibPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) runCalibration()
+            else Toast.makeText(this, I18n.t("마이크 권한이 필요합니다"), Toast.LENGTH_SHORT).show()
         }
 
     private val locationPermLauncher =
@@ -137,6 +198,7 @@ class MainActivity : AppCompatActivity() {
         if (Prefs.isPrivacyMode(this)) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
+        Storage.cleanupEmptyFiles(this)   // 빈/깨진 녹음 파일 먼저 정리
         buildUi()
         CleanupWorker.schedule(this)
 
@@ -146,6 +208,26 @@ class MainActivity : AppCompatActivity() {
         } else {
             unlocked = true
         }
+
+        handleResumeRequest(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleResumeRequest(intent)
+    }
+
+    /**
+     * 부팅 후 '녹음 재개' 알림에서 진입한 경우 — 전경(Activity)이라 마이크 FGS 시작이 허용된다.
+     * 권한이 회수됐을 수도 있으므로 일반 시작 경로와 동일하게 권한 확인 후 시작한다.
+     */
+    private fun handleResumeRequest(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_RESUME_RECORDING, false) != true) return
+        intent.removeExtra(EXTRA_RESUME_RECORDING)
+        (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager)
+            .cancel(BootReceiver.NOTIF_ID)
+        requestPermsThenStart()
     }
 
     // ───────────────────────── UI 골격 ─────────────────────────
@@ -162,6 +244,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(8), dp(16), dp(4))
         }
         topWrap.addView(buildStatusBar())
+        topWrap.addView(buildWarningCard())
         outer.addView(topWrap)
 
         // 2) 탭 (파일 / 설정) — 밑줄 인디케이터 스타일(시작/정지 버튼과 시각적으로 구분)
@@ -196,6 +279,7 @@ class MainActivity : AppCompatActivity() {
         buildBatterySection(settingsContent)       // 7. 배터리 사용량
         buildLocationSection(settingsContent)      // 8. 위치 기반 녹음
         buildLanguageSection(settingsContent)      // 9. 언어(맨 아래)
+        buildAppInfoSection(settingsContent)        // 10. 프로그램 정보(맨 아래)
 
         // 저작권
         settingsContent.addView(TextView(this).apply {
@@ -290,6 +374,43 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
+    /**
+     * 빈/깨진 녹음(인코딩 실패)이 누적됐을 때 상단에 보여 주는 경고 배너.
+     * 기본은 숨김이며 updateStatus()가 실패 카운트를 보고 표시/숨김을 갱신한다.
+     * '확인'을 누르면 누적을 비우고 배너를 닫는다.
+     */
+    private fun buildWarningCard(): View {
+        val card = Theme.card(this)
+        card.visibility = View.GONE
+        warningCard = card
+        warningText = TextView(this).apply {
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Theme.NEGATIVE)
+            setPadding(0, 0, 0, dp(8))
+        }
+        card.addView(warningText)
+        card.addView(Theme.outlineButton(this, "확인") {
+            Prefs.clearEncodeFailures(this)
+            refreshWarningCard()
+        })
+        return card
+    }
+
+    private fun refreshWarningCard() {
+        val card = warningCard ?: return
+        val n = Prefs.getEncodeFailCount(this)
+        if (n > 0) {
+            warningText?.text = I18n.f(
+                "⚠ 최근 녹음 %d건이 저장되지 않았습니다. 기기 호환성 문제일 수 있으니 ‘안정성’ 설정에서 배터리 최적화를 꺼 보세요.",
+                n
+            )
+            card.visibility = View.VISIBLE
+        } else {
+            card.visibility = View.GONE
+        }
+    }
+
     // ───────────────────────── 섹션: Pro ─────────────────────────
 
     private var proDisplayed = false
@@ -346,6 +467,17 @@ class MainActivity : AppCompatActivity() {
         c.addView(row)
     }
 
+    // ───────────────────────── 섹션: 프로그램 정보 ─────────────────────────
+
+    private fun buildAppInfoSection(parent: LinearLayout) {
+        val c = Theme.section(this, parent, "프로그램 정보", expanded = false)
+        c.addView(Theme.body(this, "HelloRecorder (절전형 상시 녹음)"))
+        c.addView(Theme.body(this).apply {
+            text = I18n.f("버전 %s", "v" + BuildConfig.VERSION_NAME)
+        })
+        c.addView(Theme.hint(this, "만든 곳: Studioroom · 문의: contact@studioroomkr.com"))
+    }
+
     // ───────────────────────── 섹션: 녹음 감도 ─────────────────────────
 
     private fun buildSensitivitySection(parent: LinearLayout) {
@@ -353,7 +485,7 @@ class MainActivity : AppCompatActivity() {
         thresholdLabel = Theme.body(this)
         c.addView(thresholdLabel)
         val cur = Prefs.getThreshold(this)
-        c.addView(Theme.seekBar(this).apply {
+        val seek = Theme.seekBar(this).apply {
             max = (Prefs.MAX_THRESHOLD - Prefs.MIN_THRESHOLD).toInt()
             progress = (cur - Prefs.MIN_THRESHOLD).toInt()
             setOnSeekBarChangeListener(simpleSeek { p ->
@@ -361,21 +493,27 @@ class MainActivity : AppCompatActivity() {
                 Prefs.setThreshold(this@MainActivity, v)
                 updateThresholdLabel(v)
             })
-        })
+        }
+        sensitivitySeek = seek
+        c.addView(seek)
         updateThresholdLabel(cur)
         c.addView(Theme.hint(this, "값이 낮을수록 작은 소리도 녹음됩니다. 상단 막대가 기준선을 넘으면 녹음돼요."))
 
-        // ── 음성 기능 (Pro 전용): 사람 목소리 우선 / 정밀 확인 / 목소리 강조 ──
-        if (Pro.isPro) {
-            // 사람 목소리 우선 모드 (음성 인식 기반 트리거)
-            c.addView(Theme.checkBox(this, "사람 목소리 우선 (음성 인식)").apply {
-                isChecked = Prefs.isVoiceModeEnabled(this@MainActivity)
-                setOnCheckedChangeListener { _, on ->
-                    Prefs.setVoiceModeEnabled(this@MainActivity, on)
-                }
-            })
-            c.addView(Theme.hint(this, "켜면 음성 대역(약 250~3800Hz) 검출 + 음성활동검출(WebRTC VAD)로, 사람 목소리만 골라 녹음하고 작은 목소리도 더 잘 잡습니다. 위 임계값은 이때 '음성 대역 크기의 바닥선'으로 동작하니, 작은 목소리까지 잡으려면 임계값을 낮추세요(소음은 VAD가 걸러줍니다). 저장 오디오를 또렷하게 만드는 건 아래 ‘목소리 강조’에서 켜세요. 변경은 녹음을 껐다 켜면 반영돼요."))
+        // 주변 소음 자동 보정 — 노이즈 플로어를 측정해 무음 기준을 자동으로 맞춤
+        c.addView(Theme.secondaryButton(this, "주변 소음 자동 맞춤") { startCalibration() })
+        c.addView(Theme.hint(this, "조용히 한 뒤 누르면 약 2초간 주변 소음을 측정해 무음 기준을 자동으로 맞춥니다. 녹음 중이면 잠시 끄고 측정하세요."))
 
+        // ── 음성 기능 ──
+        // '사람 목소리 우선'은 무료 개방(앱 핵심 차별점 체험). 신경망 정밀화(Silero·목소리 강조)는 Pro.
+        c.addView(Theme.checkBox(this, "사람 목소리 우선 (음성 인식)").apply {
+            isChecked = Prefs.isVoiceModeEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                Prefs.setVoiceModeEnabled(this@MainActivity, on)
+            }
+        })
+        c.addView(Theme.hint(this, "사람 목소리만 골라 녹음합니다. 작은 목소리도 잘 잡고 잡음은 걸러져요. 저장되는 소리(음질)는 바뀌지 않습니다."))
+
+        if (Pro.isPro) {
             // 2차 정밀 확인 (Silero VAD) — 음성 우선 모드의 하위 옵션
             c.addView(Theme.checkBox(this, "정밀 음성 확인 (Silero)").apply {
                 isChecked = Prefs.isSileroEnabled(this@MainActivity)
@@ -383,19 +521,28 @@ class MainActivity : AppCompatActivity() {
                     Prefs.setSileroEnabled(this@MainActivity, on)
                 }
             })
-            c.addView(Theme.hint(this, "‘사람 목소리 우선’이 켜져 있을 때, WebRTC가 1차로 잡은 후보를 신경망(Silero) VAD가 2차로 한 번 더 확인해 잡음 오탐을 더 줄입니다. 무음일 땐 돌지 않고 후보가 있을 때만 동작해 배터리 부담은 작습니다. 배터리를 더 아끼려면 끄세요(이때는 WebRTC만 사용)."))
+            c.addView(Theme.hint(this, "‘사람 목소리 우선’의 판단을 신경망으로 한 번 더 확인해 오녹음을 줄입니다. 배터리를 아끼려면 끄세요. 음질은 바뀌지 않습니다."))
 
-            // 목소리 강조 — AGC·노이즈억제·음성튜닝 마이크 + GTCRN 잡음제거를 함께 적용
+            // 목소리 강조 — 노이즈억제·음성튜닝 마이크 + GTCRN 잡음제거를 함께 적용 (AGC 미사용)
             c.addView(Theme.checkBox(this, "목소리 강조").apply {
                 isChecked = Prefs.isVoiceEmphasisEnabled(this@MainActivity)
                 setOnCheckedChangeListener { _, on ->
                     Prefs.setVoiceEmphasisEnabled(this@MainActivity, on)
                 }
             })
-            c.addView(Theme.hint(this, "켜면 음성에 튜닝된 마이크 + 자동 이득(AGC)·노이즈 억제와 신경망(GTCRN) 잡음 제거를 함께 적용해, 에어컨·바람·키보드 같은 잡음을 줄이고 목소리를 또렷하게 살려 저장합니다. 녹음(인코딩) 중에만 동작해 배터리 부담은 제한적입니다. 끄면 목소리 파장 강조 없이 원본 그대로 녹음됩니다(기본 꺼짐). 변경은 녹음을 껐다 켜면 반영돼요."))
+            c.addView(Theme.hint(this, "가까운 내 목소리를 앞세우고 잡음·멀리 있는 소리를 줄입니다(신경망 잡음 제거 + 근접 우선). 끄면 거의 원본 그대로 녹음돼요(웅웅거림을 줄이는 가벼운 럼블 컷은 항상 적용). 변경은 녹음을 껐다 켜야 반영됩니다."))
+
+            // 먼 소리 줄이기 — 잡음 제거 없이 근접 우선 익스팬더만 (원음 질감 유지)
+            c.addView(Theme.checkBox(this, "먼 소리 줄이기").apply {
+                isChecked = Prefs.isDistanceReduceEnabled(this@MainActivity)
+                setOnCheckedChangeListener { _, on ->
+                    Prefs.setDistanceReduceEnabled(this@MainActivity, on)
+                }
+            })
+            c.addView(Theme.hint(this, "잡음 제거 없이 멀리 있는(약한) 소리만 자연스럽게 낮춥니다. 원음 질감이 그대로라 ‘목소리 강조’가 부담스러우면 이 옵션만 켜 보세요. ‘사람 목소리 우선’과 함께 쓸 수 있으며, 다음 녹음 구간부터 적용됩니다."))
         } else {
-            c.addView(Theme.hint(this, "사람 목소리 우선(음성 인식)·정밀 확인(Silero)·목소리 강조(잡음 제거)는 Pro 전용 기능입니다. 무료에서는 기본 녹음만 동작합니다."))
-            c.addView(Theme.primaryButton(this, "Pro 잠금 해제") {
+            c.addView(Theme.hint(this, "정밀 음성 확인(Silero)·목소리 강조(신경망 잡음 제거)·먼 소리 줄이기는 Pro 전용입니다. ‘사람 목소리 우선’은 무료로 쓸 수 있어요."))
+            c.addView(Theme.outlineButton(this, "정밀 확인·목소리 강조는 Pro") {
                 startActivity(Intent(this, ProActivity::class.java))
             })
         }
@@ -1079,7 +1226,7 @@ class MainActivity : AppCompatActivity() {
                     recreate()  // 화면 보안 플래그 즉시 반영
                 }
             })
-            c.addView(Theme.hint(this, "켜면 화면 캡처·녹화가 차단되고, 최근 앱 목록에서 화면이 가려지며, 알림에 ‘녹음’ 표시가 숨겨집니다."))
+            c.addView(Theme.hint(this, "켜면 화면 캡처·녹화가 차단되고, 최근 앱 목록에서 화면이 가려집니다. (녹음 중 알림은 정책상 항상 표시됩니다.)"))
         } else {
             c.addView(Theme.hint(this, "프라이버시 모드(화면 캡처 차단)는 Pro 전용 기능입니다."))
             c.addView(Theme.outlineButton(this, "프라이버시 모드는 Pro") { startActivity(Intent(this, ProActivity::class.java)) })
@@ -1094,6 +1241,39 @@ class MainActivity : AppCompatActivity() {
         c.addView(Theme.outlineButton(this, "배터리 최적화 제외 설정") { requestIgnoreBatteryOptimization() })
         c.addView(Theme.outlineButton(this, "백그라운드 실행 / 자동 시작 설정") { openAutoStartSettings() })
         c.addView(Theme.secondaryButton(this, "녹음이 멈춰요? 기기별 설정 보기") { showBackgroundHelpDialog() })
+
+        // 오류 진단 (온디바이스 크래시 로그 — 외부로 전송하지 않음)
+        c.addView(Theme.divider(this).apply {
+            (layoutParams as? LinearLayout.LayoutParams)?.setMargins(0, dp(12), 0, dp(8))
+        })
+        c.addView(Theme.subHeader(this, "오류 진단"))
+        c.addView(Theme.hint(this, "앱이 예기치 않게 종료되면 그 원인 기록을 기기 안에만 저장합니다(외부로 전송하지 않음). 문제가 있을 때 아래에서 기록을 공유해 알려 주세요."))
+        val crashBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        crashDiagBox = crashBox
+        c.addView(crashBox)
+        refreshCrashDiag()
+    }
+
+    private fun refreshCrashDiag() {
+        val box = crashDiagBox ?: return
+        box.removeAllViews()
+        val n = CrashLogger.count(this)
+        if (n == 0) {
+            box.addView(Theme.hint(this, "기록된 오류가 없습니다."))
+            return
+        }
+        box.addView(Theme.body(this).apply {
+            text = I18n.f("기록된 오류 %d건", n)
+            setTextColor(Theme.NEGATIVE)
+        })
+        box.addView(Theme.outlineButton(this, "오류 로그 공유") {
+            Share.shareLogFiles(this, CrashLogger.list(this))
+        })
+        box.addView(Theme.smallButton(this, "오류 로그 지우기", danger = true) {
+            CrashLogger.clear(this)
+            refreshCrashDiag()
+            Toast.makeText(this, I18n.t("오류 로그를 지웠습니다"), Toast.LENGTH_SHORT).show()
+        })
     }
 
     private fun openAutoStartSettings() {
@@ -1290,19 +1470,55 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun ckOf(f: File): String = "${f.absolutePath}:${f.lastModified()}"
+
+    /** 파일 길이(ms). 한 번의 메타데이터 읽기로 ms·표시문자열 캐시를 함께 채운다(블로킹). */
     private fun durationMs(f: File): Long {
-        val ck = "${f.absolutePath}:${f.lastModified()}"
+        val ck = ckOf(f)
         durationMsCache[ck]?.let { return it }
+        // setDataSource 가 던지면(손상·삭제 파일) release() 가 건너뛰어져 네이티브 객체가 샌다.
+        // finally 로 반드시 해제한다.
+        val mmr = android.media.MediaMetadataRetriever()
         val ms = try {
-            val mmr = android.media.MediaMetadataRetriever()
             mmr.setDataSource(f.absolutePath)
-            val v = mmr.extractMetadata(
+            mmr.extractMetadata(
                 android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
             )?.toLongOrNull() ?: 0L
-            mmr.release(); v
         } catch (_: Exception) { 0L }
+        finally { try { mmr.release() } catch (_: Exception) {} }
         durationMsCache[ck] = ms
+        durationCache[ck] = if (ms > 0) { val s = ms / 1000; "%d:%02d".format(s / 60, s % 60) } else "--:--"
         return ms
+    }
+
+    /**
+     * .lvl 활동 프로필을 집계한 짧은 태그(예: "대화 약 3분", "대부분 무음"). 블로킹.
+     * 프로필 없음(구버전) 또는 소리는 있으나 음성 미분석(음성 모드 꺼짐)이면 "" (오해 방지).
+     */
+    private fun activityTag(f: File): String {
+        val ck = ckOf(f)
+        tagCache[ck]?.let { return it }
+        val prof = Storage.readActivityProfile(f)
+        val tag = if (prof == null || prof.voice.isEmpty()) {
+            ""
+        } else {
+            val n = prof.voice.size
+            val voiceCount = prof.voice.count { it }
+            val loudCount = prof.levels.count { it >= 0.12f }
+            when {
+                voiceCount > 0 -> {
+                    val durMs = durationMsCache[ck] ?: durationMs(f)
+                    val base = if (durMs > 0) durMs else n * 500L
+                    val speechSec = (base / 1000.0 * voiceCount / n).toLong().coerceAtLeast(1)
+                    if (speechSec >= 60) I18n.f("대화 약 %d분", speechSec / 60)
+                    else I18n.f("대화 약 %d초", speechSec)
+                }
+                loudCount.toFloat() / n < 0.05f -> I18n.t("대부분 무음")
+                else -> ""
+            }
+        }
+        tagCache[ck] = tag
+        return tag
     }
 
     private fun applySort(files: List<File>): List<File> {
@@ -1397,7 +1613,8 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(stripArrow("‹") { weekAnchorMillis -= 7L * 86400_000L; buildWeekStrip() })
+        row.addView(stripArrow("‹") { weekAnchorMillis -= 7L * 86400_000L; buildWeekStrip() }
+            .apply { contentDescription = I18n.t("이전 주") })
         for (i in 0..6) {
             val dayCal = cal.clone() as Calendar
             dayCal.add(Calendar.DAY_OF_MONTH, i)
@@ -1415,7 +1632,8 @@ class MainActivity : AppCompatActivity() {
             cell.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             row.addView(cell)
         }
-        row.addView(stripArrow("›") { weekAnchorMillis += 7L * 86400_000L; buildWeekStrip() })
+        row.addView(stripArrow("›") { weekAnchorMillis += 7L * 86400_000L; buildWeekStrip() }
+            .apply { contentDescription = I18n.t("다음 주") })
         box.addView(row)
 
         if (selectedDateKey != null) {
@@ -1447,6 +1665,7 @@ class MainActivity : AppCompatActivity() {
         setPadding(0, dp(4), 0, dp(4))
         isClickable = true
         setOnClickListener { onClick() }
+        contentDescription = "$weekday $day" + (if (hasRec) ", " + I18n.t("녹음 있음") else "")
         addView(TextView(this@MainActivity).apply {
             text = weekday
             textSize = 11f
@@ -1484,6 +1703,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshFileList() {
         if (!::fileListContainer.isInitialized) return
+        listGeneration++   // 진행 중인 비동기 길이 로딩이 옛 뷰를 갱신하지 않게
         buildWeekStrip()   // 달력 점 갱신
         fileListContainer.removeAllViews()
         shownKeys.clear()
@@ -1540,6 +1760,7 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
             headerRow.addView(Theme.checkBox(this, "").apply {
+                contentDescription = I18n.t("이 날짜 전체 선택")
                 // 그날 파일이 모두 선택돼 있으면 체크 상태로 표시
                 isChecked = dayKeys.isNotEmpty() && selectedKeys.containsAll(dayKeys)
                 setOnClickListener {
@@ -1623,7 +1844,7 @@ class MainActivity : AppCompatActivity() {
     /** 기존에 저장된 짧은 녹음(기준보다 짧은 파일)을 한 번에 삭제. 보관 파일·길이 미상 파일은 제외. */
     private fun cleanupShortRecordings() {
         // A 와 동일 기준: 화면에 'N초'로 보이는 것까지(=실제 (N+1)초 미만) 짧은 것으로 본다.
-        val cutoffMs = (Prefs.getMinKeepSec(this) + 1) * 1000L
+        val cutoffMs = RecordingLogic.minKeepThresholdMs(Prefs.getMinKeepSec(this))
         val candidates = Storage.listAllFiles(this).filter { f ->
             val key = Storage.relativeKey(this, f)
             if (Prefs.isProtected(this, key)) return@filter false
@@ -1663,23 +1884,11 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, if (on) I18n.f("%d개 보관됨", files.size) else I18n.f("%d개 보관 해제됨", files.size), Toast.LENGTH_SHORT).show()
     }
 
+    /** 표시용 길이 문자열(블로킹). durationMs 가 두 캐시를 모두 채운다. */
     private fun fmtDuration(f: File): String {
-        val ck = "${f.absolutePath}:${f.lastModified()}"
-        durationCache[ck]?.let { return it }
-        val result = try {
-            val mmr = android.media.MediaMetadataRetriever()
-            mmr.setDataSource(f.absolutePath)
-            val ms = mmr.extractMetadata(
-                android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
-            )?.toLongOrNull() ?: 0L
-            mmr.release()
-            val s = ms / 1000
-            "%d:%02d".format(s / 60, s % 60)
-        } catch (_: Exception) {
-            "--:--"
-        }
-        durationCache[ck] = result
-        return result
+        durationCache[ckOf(f)]?.let { return it }
+        durationMs(f)
+        return durationCache[ckOf(f)] ?: "--:--"
     }
 
     private fun matchesSearch(f: File, dayName: String): Boolean {
@@ -1703,6 +1912,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val selectBox = Theme.checkBox(this, "").apply {
+            contentDescription = I18n.t("선택")
             isChecked = selectedKeys.contains(key)
             setOnCheckedChangeListener { _, c ->
                 if (c) selectedKeys.add(key) else selectedKeys.remove(key)
@@ -1710,6 +1920,7 @@ class MainActivity : AppCompatActivity() {
         }
         // 타임라인 게이지 (이 파일 재생 중에만 보임) — 드래그/탭으로 구간 탐색
         val gauge = Theme.seekBar(this).apply {
+            contentDescription = I18n.t("재생 위치")
             visibility = if (key == playingKey) View.VISIBLE else View.GONE
             setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
@@ -1726,7 +1937,7 @@ class MainActivity : AppCompatActivity() {
             primary = true
         ) {
             togglePlayInline(f, key, playBtn!!, gauge)
-        }
+        }.apply { contentDescription = I18n.t("재생/정지") }
         if (key == playingKey) {           // 재생 중 행이 다시 그려진 경우 참조 갱신
             playButton = playBtn
             playProgressBar = gauge
@@ -1739,22 +1950,40 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         val info = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Theme.TEXT)
+            setPadding(12, dp(6), 8, dp(6))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        // 길이(메타데이터)는 비동기로 채운다 — 캐시에 없으면 '…' 로 먼저 그리고
+        // 백그라운드에서 읽어 해당 행만 갱신(메인스레드 MediaMetadataRetriever 제거 → 잰크/ANR 방지).
+        fun composeInfo(durClock: String) {
             val sizeKb = f.length() / 1024
             val time = DateFormat.format("HH:mm", f.lastModified())
-            val dur = fmtDuration(f)
             val label = Prefs.getLabel(this@MainActivity, key)
             val labelLine = if (label.isNotEmpty()) "\n# $label" else ""
             val bm = Prefs.getBookmarks(this@MainActivity, key).size
             val bmLine = if (bm > 0) "  ★$bm" else ""
             val cat = Prefs.getCategory(this@MainActivity, key)
             val catTag = if (cat.isNotEmpty()) "  [$cat]" else ""
-            text = "${f.name}\n$dur · ${sizeKb}KB · $time$bmLine$catTag$labelLine"
-            textSize = 13f
-            setTextColor(Theme.TEXT)
-            setPadding(12, dp(6), 8, dp(6))
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            val tag = tagCache[ckOf(f)] ?: ""
+            val tagLine = if (tag.isNotEmpty()) "  · $tag" else ""
+            info.text = "${f.name}\n$durClock · ${sizeKb}KB · $time$tagLine$bmLine$catTag$labelLine"
+        }
+        val ck = ckOf(f)
+        val cachedDur = durationCache[ck]
+        composeInfo(cachedDur ?: "…")
+        if ((cachedDur == null || tagCache[ck] == null) && !metaExecutor.isShutdown) {
+            val gen = listGeneration
+            metaExecutor.execute {
+                durationMs(f)     // 백그라운드에서 메타데이터 읽기(두 캐시 채움)
+                activityTag(f)    // .lvl 집계 태그도 함께 채움
+                val clock = durationCache[ck] ?: "--:--"
+                uiHandler.post { if (gen == listGeneration) composeInfo(clock) }
+            }
         }
         val shareBtn = Theme.iconButton(this, R.drawable.ic_share) { Share.shareFile(this, f) }
+            .apply { contentDescription = I18n.t("공유") }
         val protectBox = Theme.checkBox(this, "보관").apply {
             isChecked = Prefs.isProtected(this@MainActivity, key)
             setOnCheckedChangeListener { _, c -> Prefs.setProtected(this@MainActivity, key, c) }
@@ -1796,11 +2025,19 @@ class MainActivity : AppCompatActivity() {
         playButton = btn
         playProgressBar = gauge
         gauge.visibility = View.VISIBLE
-        Player.toggle(f) {
+        val started = Player.toggle(
+            f,
+            onError = {
+                // 손상·삭제된 파일: 크래시 대신 안내하고 행 UI 를 원상복구
+                Toast.makeText(this, I18n.t("재생할 수 없는 파일입니다"), Toast.LENGTH_SHORT).show()
+                stopInlinePlay()
+            }
+        ) {
             // 재생 자연 종료 시
             gauge.progress = 0
             btn.text = "▶"
         }
+        if (!started) return
         uiHandler.removeCallbacks(playTick)
         uiHandler.post(playTick)
     }
@@ -1886,6 +2123,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             startTimeText.visibility = View.GONE
         }
+
+        // 빈/깨진 녹음 경고 배너 갱신 (실패가 있으면 표시)
+        refreshWarningCard()
     }
 
     private fun fmtElapsed(ms: Long): String {
@@ -1960,12 +2200,22 @@ class MainActivity : AppCompatActivity() {
         stopInlinePlay()
     }
 
+    override fun onDestroy() {
+        metaExecutor.shutdownNow()   // 비동기 길이 로딩 스레드 정리
+        // Pro 는 프로세스 수명 싱글턴이다. 여기서 끊지 않으면 파괴된 Activity 가
+        // onChanged 람다(this 캡처)에 붙들려 recreate() 때마다 샌다.
+        Pro.onChanged = null
+        super.onDestroy()
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
     // 밑줄 인디케이터 탭 (아이콘+라벨을 한 묶음으로 가운데 정렬)
     private fun makeTab(label: String, iconRes: Int): LinearLayout {
         val icon = ImageView(this).apply {
             setImageResource(iconRes)
+            // 라벨 텍스트가 같은 행에 있으므로 아이콘은 장식 — 스크린리더에서 건너뜀
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             layoutParams = LinearLayout.LayoutParams(dp(18), dp(18))
                 .apply { setMargins(0, 0, dp(6), 0) }
         }
@@ -2003,6 +2253,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateThresholdLabel(value: Double) {
         thresholdLabel.text = I18n.f("현재 기준: %d", value.toInt())
+    }
+
+    // ── 주변 소음 자동 보정 ──
+
+    private fun startCalibration() {
+        if (Calibrator.hasMicPermission(this)) runCalibration()
+        else calibPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun runCalibration() {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(I18n.t("주변 소음 측정 중"))
+            .setMessage(I18n.t("약 2초간 조용히 해주세요…"))
+            .setCancelable(false)
+            .show()
+        Calibrator.calibrate(this) { recommended ->
+            dialog.dismiss()
+            if (recommended == null) {
+                Toast.makeText(this, I18n.t("측정 실패 — 녹음을 잠시 끄고 다시 시도하세요"), Toast.LENGTH_LONG).show()
+                return@calibrate
+            }
+            Prefs.setThreshold(this, recommended)
+            sensitivitySeek?.progress = (recommended - Prefs.MIN_THRESHOLD).toInt()
+                .coerceIn(0, (Prefs.MAX_THRESHOLD - Prefs.MIN_THRESHOLD).toInt())
+            updateThresholdLabel(recommended)
+            Toast.makeText(this, I18n.f("자동 기준 설정: %d", recommended.toInt()), Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun simpleSeek(onProgress: (Int) -> Unit) =
@@ -2054,5 +2331,10 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, I18n.t("설정을 열 수 없습니다"), Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    companion object {
+        /** 부팅 후 '녹음 재개' 알림이 MainActivity 를 열 때 붙이는 플래그. */
+        const val EXTRA_RESUME_RECORDING = "resume_recording"
     }
 }

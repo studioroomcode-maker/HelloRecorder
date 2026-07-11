@@ -9,14 +9,15 @@
 | `namespace` / `applicationId` | `com.studioroomkr.hellorecorder` | ✅ 일치, com.example 아님 |
 | `minSdk` | 26 (Android 8.0) | ✅ 적절 (적응형 아이콘·생체인증·FGS 모두 OK) |
 | `targetSdk` / `compileSdk` | 36 | ✅ 최신 — Play 최소 요건 충족 (edge-to-edge·FGS 타입 코드로 처리됨) |
-| `versionCode` / `versionName` | 1 / "1.0" | ✅ 첫 업로드 OK |
+| `versionCode` / `versionName` | 1 / "0.5.0" | ✅ 첫 업로드 OK (정식 출시 땐 1.0.0 권장) |
 | Java | 11 | ✅ |
 | 의존성 | appcompat·work·biometric·osmdroid | ✅ (osmdroid 추가됨) |
 
 ### 손볼 점 (선택)
 1. **appcompat 중복 선언**: `libs.androidx.appcompat` + `"androidx.appcompat:appcompat:1.7.0"` 둘 다 있음 → 하나만 남겨도 됨(빌드엔 무해, 경고만). 정리하려면 명시 줄(`implementation("androidx.appcompat:appcompat:1.7.0")`) 삭제.
 2. **release minify 비활성**(`optimization { enable = false }`): 지금 그대로 OK(안전). 나중에 용량 줄이려 R8 켜면 osmdroid용 keep 규칙이 필요할 수 있음 → v1은 끄고 가는 게 안전.
-3. **서명(Signing)**: release 서명 설정이 없음 → 아래 C 참고. AAB 만들 때 키 필요.
+3. **서명(Signing)**: ✅ **설정 완료** — `keystore.properties`(git 제외)에서 키를 읽어 release 빌드에 자동 서명하도록 구성됨. 키 파일 생성만 하면 됨(아래 C 참고).
+4. **백업 차단**: ✅ **적용 완료** — `allowBackup="false"` + `data_extraction_rules.xml` 전 도메인 제외로 녹음 파일의 클라우드 백업·기기간 전송(Android 12+) 모두 차단.
 
 ---
 
@@ -42,10 +43,31 @@
 ---
 
 ## C. AAB 빌드 & 서명 (Play는 AAB 필수)
-1. Android Studio: **Build → Generate Signed Bundle / APK → Android App Bundle**
-2. 키스토어(.jks) 새로 생성(처음이면) → **비밀번호·키 별칭 안전 보관**(분실 시 업데이트 불가)
+
+> 서명 설정은 이미 `build.gradle.kts` 에 들어가 있습니다. **키 파일과 `keystore.properties` 만 만들면**
+> release 빌드가 자동 서명됩니다. 비밀번호는 코드에 없고 git 에도 안 올라갑니다.
+
+### C-1. 한 번만: 키스토어 + keystore.properties 만들기
+1. 키스토어(.jks) 생성 — Android Studio **Build → Generate Signed Bundle / APK → Android App Bundle**
+   에서 *Create new...* 로 만들거나, 명령줄 `keytool` 사용. 권장 위치: `android/keystore/release.jks`
+2. **비밀번호·키 별칭 안전 보관** (분실 시 앱 업데이트 영구 불가)
+3. `android/keystore.properties.example` 를 **`android/keystore.properties`** 로 복사 후 실제 값 입력:
+   ```
+   storeFile=keystore/release.jks   # android/ 기준 상대경로
+   storePassword=...
+   keyAlias=...
+   keyPassword=...
+   ```
+   ※ `keystore.properties` 와 `*.jks` 는 `.gitignore` 로 제외됨 — **절대 커밋 금지**.
+
+### C-2. 빌드
+- Android Studio 마법사로 만들거나, 명령줄: `./gradlew :app:bundleRelease`
+- 서명 확인: `./gradlew :app:signingReport`
+- `keystore.properties` 가 없으면 서명 설정은 자동으로 건너뜀(미서명 빌드) — 디버그 작업엔 영향 없음.
+
+### C-3. 업로드
 3. **Play App Signing** 권장(업로드 키만 관리, 앱 서명키는 Google이 보관)
-4. 생성된 `.aab` 를 Play Console에 업로드
+4. 생성된 `.aab`(`android/app/build/outputs/bundle/release/`) 를 Play Console에 업로드
 
 ---
 
@@ -81,6 +103,8 @@
 ---
 
 ## 한 줄 요약
-- build.gradle.kts: **문제 없음**(서명만 설정하면 됨).
+- build.gradle.kts: **문제 없음**. 서명 설정 완료 — **키 파일 + `keystore.properties` 만 만들면** 끝(위 C).
+- 백업/기기간 전송 차단 완료(`allowBackup="false"` + data_extraction_rules).
 - 위치를 사용중에만으로 낮춰 **백그라운드 위치 심사 단계가 사라졌고**, Data Safety는 **"수집 안 함"** 으로 깔끔하게 갑니다.
-- 남은 변수: 상시 녹음에 대한 정책 스캔, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 처리(위 D 참고).
+- 남은 할 일(코드 외): **스크린샷(폰 ≥2장)**, **개인정보처리방침 공개 URL**, Console **Data Safety·콘텐츠 등급·FGS(마이크) 사용 사례** 양식.
+- 남은 변수: 상시 녹음에 대한 정책 스캔.

@@ -33,6 +33,8 @@ object I18n {
         "녹음 중" to "Recording",
         "소리가 감지될 때만 저장됩니다" to "Saves only when sound is detected",
         "녹음 서비스" to "Recording service",
+        "녹음 재개" to "Resume recording",
+        "탭하여 녹음을 다시 시작하세요" to "Tap to resume recording",
         "파일" to "Files",
         "설정" to "Settings",
         "● 시작" to "● Start",
@@ -45,6 +47,8 @@ object I18n {
         "🟢 대기 중 · 음량 %d" to "🟢 Waiting · level %d",
         "구간: %s ~ %s" to "Section: %s ~ %s",
         "저장됨: %s" to "Saved: %s",
+        "⚠ 최근 녹음 %d건이 저장되지 않았습니다. 기기 호환성 문제일 수 있으니 ‘안정성’ 설정에서 배터리 최적화를 꺼 보세요." to
+            "⚠ %d recent recordings failed to save. This may be a device-compatibility issue — try disabling battery optimization in the Reliability settings.",
 
         // ── 섹션 제목 ──
         "녹음 감도 (무음 기준)" to "Sensitivity (silence threshold)",
@@ -61,6 +65,30 @@ object I18n {
         "값이 낮을수록 작은 소리도 녹음됩니다. 상단 막대가 기준선을 넘으면 녹음돼요." to
             "Lower = picks up quieter sounds. Records when the top bar crosses the line.",
         "현재 기준: %d" to "Threshold: %d",
+        "가까운 내 목소리를 앞세우고 잡음·멀리 있는 소리를 줄입니다(신경망 잡음 제거 + 근접 우선). 끄면 거의 원본 그대로 녹음돼요(웅웅거림을 줄이는 가벼운 럼블 컷은 항상 적용). 변경은 녹음을 껐다 켜야 반영됩니다." to
+            "Brings your nearby voice forward and reduces noise and distant sounds (neural noise removal + proximity priority). When off, it records almost as-is (a light rumble cut is always applied). Changes take effect after you stop and start recording again.",
+        "주변 소음 자동 맞춤" to "Auto-tune to ambient noise",
+        "조용히 한 뒤 누르면 약 2초간 주변 소음을 측정해 무음 기준을 자동으로 맞춥니다. 녹음 중이면 잠시 끄고 측정하세요." to
+            "Stay quiet and tap to measure ambient noise for ~2s and set the silence threshold automatically. Stop recording first if it's running.",
+        "주변 소음 측정 중" to "Measuring ambient noise",
+        "약 2초간 조용히 해주세요…" to "Please stay quiet for ~2 seconds…",
+        "측정 실패 — 녹음을 잠시 끄고 다시 시도하세요" to "Measurement failed — stop recording and try again",
+        "자동 기준 설정: %d" to "Auto threshold set: %d",
+        "마이크 권한이 필요합니다" to "Microphone permission required",
+        "녹음하려면 설정에서 마이크 권한을 허용해 주세요." to
+            "To record, please allow the microphone permission in Settings.",
+        "설정 열기" to "Open settings",
+        "알림 권한이 없어 녹음 중 상태 알림이 표시되지 않습니다" to
+            "Without notification permission, the recording status notification won't be shown",
+        "재생할 수 없는 파일입니다" to "This file can't be played",
+        "정밀 음성 확인(Silero)·목소리 강조(신경망 잡음 제거)·먼 소리 줄이기는 Pro 전용입니다. ‘사람 목소리 우선’은 무료로 쓸 수 있어요." to
+            "Precise voice check (Silero), voice enhancement (neural noise removal) and distant-sound reduction are Pro. 'Human-voice priority' is free to use.",
+        "먼 소리 줄이기" to "Reduce distant sounds",
+        "잡음 제거 없이 멀리 있는(약한) 소리만 자연스럽게 낮춥니다. 원음 질감이 그대로라 ‘목소리 강조’가 부담스러우면 이 옵션만 켜 보세요. ‘사람 목소리 우선’과 함께 쓸 수 있으며, 다음 녹음 구간부터 적용됩니다." to
+            "Naturally lowers distant (weak) sounds without noise removal. The original tone is preserved — if 'voice enhancement' sounds too processed, try this alone. Works together with 'human-voice priority'; applies from the next recording segment.",
+        "정밀 확인·목소리 강조는 Pro" to "Precise check & enhancement — Pro",
+        "• 정밀 음성 확인 · 목소리 강조 (신경망)" to "• Precise voice check · enhancement (neural)",
+        "• 먼 소리 줄이기 (근접 우선)" to "• Distant-sound reduction (proximity)",
         "구간 묶기: 무음 %d초 넘으면 새 파일로 분리" to "Merge gap: split after %ds of silence",
         "길게 잡을수록 짧은 침묵으로 끊긴 구간을 한 파일로 묶어 파일 수가 줄어듭니다. 묶이는 구간의 중간 소리는 끊지 않고 이어서 저장하며, 완전한 무음(볼륨 0)만 건너뜁니다. 짧게 잡으면 잘게 나뉩니다." to
             "Longer = merges segments split by short silences into one file, reducing file count. Sounds within the merged span are kept continuously; only true silence (volume 0) is skipped. Shorter = more files.",
@@ -160,12 +188,20 @@ object I18n {
         "백그라운드 실행 / 자동 시작 설정" to "Background / auto-start settings",
         "녹음이 멈춰요? 기기별 설정 보기" to "Recording stops? Device-specific help",
         "기기별 설정 안내" to "Device-specific settings",
+        "오류 진단" to "Error diagnostics",
+        "앱이 예기치 않게 종료되면 그 원인 기록을 기기 안에만 저장합니다(외부로 전송하지 않음). 문제가 있을 때 아래에서 기록을 공유해 알려 주세요." to
+            "If the app closes unexpectedly, the cause is saved only on your device (never sent anywhere). If you run into a problem, share the log below to let us know.",
+        "기록된 오류가 없습니다." to "No errors recorded.",
+        "기록된 오류 %d건" to "%d errors recorded",
+        "오류 로그 공유" to "Share error logs",
+        "오류 로그 지우기" to "Clear error logs",
+        "오류 로그를 지웠습니다" to "Error logs cleared",
         "확인" to "OK",
         "앱 잠금" to "App lock",
         "녹음 기록을 보려면 인증하세요" to "Authenticate to view recordings",
         "프라이버시 모드" to "Privacy mode",
-        "켜면 화면 캡처·녹화가 차단되고, 최근 앱 목록에서 화면이 가려지며, 알림에 ‘녹음’ 표시가 숨겨집니다." to
-            "Blocks screenshots/screen recording, hides the screen in Recents, and hides 'recording' wording in the notification.",
+        "켜면 화면 캡처·녹화가 차단되고, 최근 앱 목록에서 화면이 가려집니다. (녹음 중 알림은 정책상 항상 표시됩니다.)" to
+            "Blocks screenshots/screen recording and hides the screen in Recents. (The recording notification is always shown, as required by policy.)",
         "서비스 실행 중" to "Service running",
 
         // ── 파일 목록 / 일괄 ──
@@ -192,6 +228,14 @@ object I18n {
             "Check on the left to select → bulk delete/keep. 'Keep' is excluded from auto-delete and cleanup.",
         "보관" to "Keep",
         "공유" to "Share",
+        // 접근성(TalkBack) 라벨
+        "선택" to "Select",
+        "재생/정지" to "Play/Stop",
+        "재생 위치" to "Playback position",
+        "이 날짜 전체 선택" to "Select all on this date",
+        "이전 주" to "Previous week",
+        "다음 주" to "Next week",
+        "녹음 있음" to "has recordings",
         "라벨" to "Label",
         "편집" to "Edit",
         "삭제" to "Delete",
@@ -208,6 +252,9 @@ object I18n {
         "%s 파일을 삭제할까요?" to "Delete %s?",
         "보호된 파일이 없습니다" to "No kept files",
         "시작 %s · %s" to "Started %s · %s",
+        "대화 약 %d분" to "~%d min talk",
+        "대화 약 %d초" to "~%d sec talk",
+        "대부분 무음" to "Mostly silent",
         "방금 시작" to "just started",
         "%s 경과" to "%s elapsed",
         "방금" to "just now",
@@ -223,7 +270,18 @@ object I18n {
         "▶ 재생" to "▶ Play",
         "⏸ 정지" to "⏸ Pause",
         "재생 속도" to "Playback speed",
+        "초록 막대 = 말소리 감지 · 막대를 탭하면 그 지점으로 이동" to
+            "Green bars = speech detected · tap a bar to jump there",
         "북마크" to "Bookmarks",
+        "말소리 구간" to "Speech segments",
+        "◀ 이전 발화" to "◀ Prev speech",
+        "다음 발화 ▶" to "Next speech ▶",
+        "말소리 구간 분석 중…" to "Analyzing speech segments…",
+        "말소리 구간 %d개 — 버튼으로 이동" to "%d speech segments — jump with buttons",
+        "말소리 구간 정보 없음 (이전 녹음/음성 모드 꺼짐)" to
+            "No speech-segment data (older recording / voice mode off)",
+        "마지막 발화입니다" to "Last segment",
+        "첫 발화입니다" to "First segment",
         "★ 현재 위치 북마크" to "★ Bookmark current position",
         "북마크 없음" to "No bookmarks",
         "구간 잘라내기" to "Trim section",
@@ -281,5 +339,11 @@ object I18n {
 
         // ── 언어 ──
         "언어 / Language" to "Language",
+
+        // ── 프로그램 정보 ──
+        "프로그램 정보" to "About",
+        "HelloRecorder (절전형 상시 녹음)" to "HelloRecorder (power-saving always-on recorder)",
+        "버전 %s" to "Version %s",
+        "만든 곳: Studioroom · 문의: contact@studioroomkr.com" to "By Studioroom · Contact: contact@studioroomkr.com",
     )
 }

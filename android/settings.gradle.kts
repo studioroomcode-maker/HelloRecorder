@@ -24,6 +24,8 @@ dependencyResolutionManagement {
             url = uri("https://jitpack.io")
             content { includeGroup("com.github.gkonovalov.android-vad") }
         }
+        // STT 스파이크용 로컬 AAR(sherpa-onnx) — debug 빌드 전용. app/libs 의 .aar 만 해석.
+        flatDir { dirs("app/libs") }
     }
 }
 

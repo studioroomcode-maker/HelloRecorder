@@ -5,4 +5,6 @@
     <files-path name="recordings" path="recordings/" />
     <!-- 외부 앱 전용 저장소(getExternalFilesDir)/recordings — ‘외부(공유)’ 저장 위치 공유용 -->
     <external-files-path name="ext_recordings" path="recordings/" />
+    <!-- 기기 내부(filesDir)/crash_logs — 온디바이스 오류 로그 공유용 -->
+    <files-path name="crash_logs" path="crash_logs/" />
 </paths>
