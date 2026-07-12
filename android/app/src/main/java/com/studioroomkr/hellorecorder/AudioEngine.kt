@@ -64,6 +64,9 @@ class AudioEngine(
         // 배터리 표본 주기 (위치 간격은 Prefs 에서 동적으로 읽음)
         private const val BATT_SAMPLE_MS = 2 * 60 * 1000L
         private const val LOC_MAX_AGE_MS = 10 * 60 * 1000L
+        // 캡처 중 임계 하향 비율(히스테리시스) — 이어지는 작은 말을 같은 구간으로 잡음.
+        // 낮출수록 예민(0.4 = 시작 임계의 40%). 기기 테스트로 조정.
+        private const val CONT_RATIO = 0.4
     }
 
     // 위치 게이팅 결과 (true = 녹음 허용). 위치 못 읽으면 허용 유지.
@@ -308,7 +311,15 @@ class AudioEngine(
                 }
 
                 // 매 버퍼마다 최신 임계값을 읽어 슬라이더 조정이 즉시 반영되게 함
-                val threshold = Prefs.getThreshold(context)
+                val baseThreshold = Prefs.getThreshold(context)
+                // 히스테리시스: 음성 우선 모드에서 이미 캡처 중이면 임계를 낮춰(40%),
+                // 크게 시작한 문장의 뒷부분이 작아져도 끊지 않고 이어 잡는다.
+                // 낮춘 임계로 잡히는 소리도 VAD 를 통과해야 하므로(음성만), 선풍기 같은
+                // 지속 잡음 때문에 캡처가 무한정 길어지지는 않는다. 음성 우선이 아닐 때는
+                // 잡음을 거를 수단이 없어 적용하지 않는다(파일이 한없이 길어지는 것 방지).
+                val threshold = if (voiceMode && capture != null)
+                    RecordingLogic.continuationThreshold(baseThreshold, true, CONT_RATIO)
+                else baseThreshold
                 // 음성 우선 모드: 음성 대역(대략 250~3800Hz) 에너지로 판단 → 작은 목소리에
                 // 민감하고, 저주파 웅웅거림(차·에어컨)·고주파 히스 같은 비음성 소음은 무시.
                 //

@@ -113,6 +113,12 @@ class RecordingLogicTest {
         assertEquals(1.0, RecordingLogic.proximityGain(500.0, 0.0, floor), 1e-9)  // threshold 0 가드
     }
 
+    // ── continuationThreshold: 캡처 중 임계 하향(문장 중간 끊김 방지) ──
+    @Test fun continuation_lowers_threshold_only_while_capturing() {
+        assertEquals(400.0, RecordingLogic.continuationThreshold(1000.0, true, 0.4), 1e-9)
+        assertEquals(1000.0, RecordingLogic.continuationThreshold(1000.0, false, 0.4), 1e-9)
+    }
+
     // ── needsTranscript: 자동 전사 대상 판정 ──
     @Test fun transcript_skips_done_and_recent_files() {
         val now = 1_000_000L

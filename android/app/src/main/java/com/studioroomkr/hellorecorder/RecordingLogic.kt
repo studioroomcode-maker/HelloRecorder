@@ -85,4 +85,12 @@ object RecordingLogic {
      */
     fun needsTranscript(hasTranscript: Boolean, lastModifiedMs: Long, nowMs: Long, guardMs: Long): Boolean =
         !hasTranscript && nowMs - lastModifiedMs >= guardMs
+
+    /**
+     * 감지 임계 히스테리시스: 이미 녹음(캡처) 중이면 임계를 낮춰, 크게 시작한 문장의
+     * 뒷부분이 작아져도 같은 구간으로 이어 잡는다(문장 중간 끊김 방지).
+     * 시작 임계는 그대로라 대기 상태의 절전(무음이면 무거운 검출 생략)은 변하지 않는다.
+     */
+    fun continuationThreshold(base: Double, capturing: Boolean, ratio: Double): Double =
+        if (capturing) base * ratio else base
 }
