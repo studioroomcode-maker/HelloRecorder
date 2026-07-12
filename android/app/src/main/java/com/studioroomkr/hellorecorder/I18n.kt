@@ -87,8 +87,21 @@ object I18n {
         "자동 전사 (충전 중)" to "Auto transcription (while charging)",
         "녹음을 기기 안에서 텍스트로 바꿔 나중에 말로 찾을 수 있게 합니다(외부 전송 없음). 충전 중 + 배터리 여유일 때만 돌아 배터리를 쓰지 않습니다. 지금까지 전사된 파일: %d개" to
             "Converts recordings to text on-device so you can search by what was said (nothing leaves your phone). Runs only while charging with enough battery, so it uses no battery in daily use. Files transcribed so far: %d",
-        "음성 인식 모델이 아직 설치되지 않아 대기 상태입니다. 모델 다운로드 기능은 준비 중입니다(현재는 개발자 설치 전용)." to
-            "The speech-recognition model is not installed yet, so this is on standby. In-app model download is coming (developer install only for now).",
+        "말한 내용으로 녹음을 검색하려면 한국어 음성 인식 모델(약 %dMB)이 필요합니다. 한 번만 받으면 이후엔 인터넷 없이 기기 안에서만 동작합니다." to
+            "To search recordings by spoken words, a Korean speech-recognition model (~%dMB) is needed. Download once — after that it works fully on-device, no internet.",
+        "음성 인식 모델 다운로드 (약 %dMB)" to "Download speech model (~%dMB)",
+        "음성 인식 모델 다운로드" to "Download speech-recognition model",
+        "약 %dMB 를 내려받습니다. 한 번만 받으면 이후엔 인터넷 없이 기기 안에서만 동작합니다. 어떤 네트워크로 받을까요?" to
+            "About %dMB will be downloaded. Once installed it works fully on-device without internet. Which network should be used?",
+        "Wi-Fi에서만" to "Wi-Fi only",
+        "모바일 데이터 허용" to "Allow mobile data",
+        "다운로드를 시작했습니다. 진행률은 알림에서 확인하세요." to "Download started. Check progress in notifications.",
+        "다운로드를 시작하지 못했습니다. 저장공간·네트워크를 확인해주세요." to "Couldn't start the download. Check storage and network.",
+        "음성 인식 모델 다운로드 중… %d%% (진행률은 알림에서도 보여요). 완료되면 자동으로 설치됩니다." to
+            "Downloading speech model… %d%% (also shown in notifications). It installs automatically when done.",
+        "모델 다운로드 취소" to "Cancel model download",
+        "음성 인식 모델 설치 완료 — 충전 중에 자동 전사가 시작됩니다" to
+            "Speech model installed — auto transcription will run while charging",
         "잡음 제거 없이 멀리 있는(약한) 소리만 자연스럽게 낮춥니다. 원음 질감이 그대로라 ‘목소리 강조’가 부담스러우면 이 옵션만 켜 보세요. ‘사람 목소리 우선’과 함께 쓸 수 있으며, 다음 녹음 구간부터 적용됩니다." to
             "Naturally lowers distant (weak) sounds without noise removal. The original tone is preserved — if 'voice enhancement' sounds too processed, try this alone. Works together with 'human-voice priority'; applies from the next recording segment.",
         "정밀 확인·목소리 강조는 Pro" to "Precise check & enhancement — Pro",

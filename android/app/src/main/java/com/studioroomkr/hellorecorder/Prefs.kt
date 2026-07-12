@@ -41,6 +41,7 @@ object Prefs {
     private const val KEY_VOICE_EMPHASIS = "voice_emphasis"
     private const val KEY_DISTANCE_REDUCE = "distance_reduce"
     private const val KEY_TRANSCRIBE = "auto_transcribe"
+    private const val KEY_STT_DL_IDS = "stt_dl_ids"   // 진행 중인 모델 다운로드 ID(쉼표 구분)
     // 알람식 스케줄: 요일별(dow_0..6) + 특정 날짜(date_yyyymmdd) 오버라이드
     //   각 항목: _en(켜짐), _s(시작 분, 0~1439), _e(끝 분, 0~1439)
     //   시작==끝 → 24시간 녹음 / 시작<끝 → [s,e) / 시작>끝 → 자정 넘김
@@ -399,6 +400,15 @@ object Prefs {
 
     fun setTranscribeEnabled(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_TRANSCRIBE, on).apply()
+    }
+
+    // 진행 중인 STT 모델 다운로드(DownloadManager) ID 목록. 비어 있으면 다운로드 없음.
+    fun getSttDownloadIds(ctx: Context): List<Long> =
+        prefs(ctx).getString(KEY_STT_DL_IDS, "")!!
+            .split(',').mapNotNull { it.trim().toLongOrNull() }
+
+    fun setSttDownloadIds(ctx: Context, ids: List<Long>) {
+        prefs(ctx).edit().putString(KEY_STT_DL_IDS, ids.joinToString(",")).apply()
     }
 
     // ---- 자동 삭제 보관 기간 (시간) ----

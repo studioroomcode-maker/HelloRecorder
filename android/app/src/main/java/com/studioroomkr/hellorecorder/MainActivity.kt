@@ -553,11 +553,24 @@ class MainActivity : AppCompatActivity() {
                     Prefs.setTranscribeEnabled(this@MainActivity, on)
                 }
             })
-            val sttReady = Transcriber.isModelAvailable(this)
-            c.addView(Theme.hint(this, if (sttReady)
-                I18n.f("녹음을 기기 안에서 텍스트로 바꿔 나중에 말로 찾을 수 있게 합니다(외부 전송 없음). 충전 중 + 배터리 여유일 때만 돌아 배터리를 쓰지 않습니다. 지금까지 전사된 파일: %d개", TranscriptStore.indexedFileCount(this))
-            else
-                "음성 인식 모델이 아직 설치되지 않아 대기 상태입니다. 모델 다운로드 기능은 준비 중입니다(현재는 개발자 설치 전용)."))
+            when {
+                Transcriber.isModelAvailable(this) -> {
+                    c.addView(Theme.hint(this, I18n.f("녹음을 기기 안에서 텍스트로 바꿔 나중에 말로 찾을 수 있게 합니다(외부 전송 없음). 충전 중 + 배터리 여유일 때만 돌아 배터리를 쓰지 않습니다. 지금까지 전사된 파일: %d개", TranscriptStore.indexedFileCount(this))))
+                }
+                SttModel.isDownloading(this) -> {
+                    c.addView(Theme.hint(this, I18n.f("음성 인식 모델 다운로드 중… %d%% (진행률은 알림에서도 보여요). 완료되면 자동으로 설치됩니다.", SttModel.progressPercent(this))))
+                    c.addView(Theme.outlineButton(this, "모델 다운로드 취소") {
+                        SttModel.cancel(this)
+                        recreate()
+                    })
+                }
+                else -> {
+                    c.addView(Theme.hint(this, I18n.f("말한 내용으로 녹음을 검색하려면 한국어 음성 인식 모델(약 %dMB)이 필요합니다. 한 번만 받으면 이후엔 인터넷 없이 기기 안에서만 동작합니다.", SttModel.TOTAL_MB)))
+                    c.addView(Theme.secondaryButton(this, I18n.f("음성 인식 모델 다운로드 (약 %dMB)", SttModel.TOTAL_MB)) {
+                        showSttDownloadDialog()
+                    })
+                }
+            }
         } else {
             c.addView(Theme.hint(this, "정밀 음성 확인(Silero)·목소리 강조(신경망 잡음 제거)·먼 소리 줄이기는 Pro 전용입니다. ‘사람 목소리 우선’은 무료로 쓸 수 있어요."))
             c.addView(Theme.outlineButton(this, "정밀 확인·목소리 강조는 Pro") {
@@ -2251,6 +2264,29 @@ class MainActivity : AppCompatActivity() {
         // Pro 화면에서 구매 후 돌아오면 반영
         Pro.onChanged = { runOnUiThread { recreate() } }
         if (proDisplayed != Pro.isPro) recreate()
+        // STT 모델 다운로드가 백그라운드에서 끝났으면 설치·화면 갱신
+        // (Receiver 를 놓친 경우의 안전망 — ids 없으면 즉시 리턴이라 비용 없음)
+        if (SttModel.isDownloading(this) && SttModel.finalizeIfDone(this)) recreate()
+    }
+
+    /** STT 모델 다운로드 확인 다이얼로그 — 네트워크(Wi-Fi 전용/모바일 허용) 선택. */
+    private fun showSttDownloadDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(I18n.t("음성 인식 모델 다운로드"))
+            .setMessage(I18n.f("약 %dMB 를 내려받습니다. 한 번만 받으면 이후엔 인터넷 없이 기기 안에서만 동작합니다. 어떤 네트워크로 받을까요?", SttModel.TOTAL_MB))
+            .setPositiveButton(I18n.t("Wi-Fi에서만")) { _, _ -> startSttDownload(false) }
+            .setNeutralButton(I18n.t("모바일 데이터 허용")) { _, _ -> startSttDownload(true) }
+            .setNegativeButton(I18n.t("취소"), null)
+            .show()
+    }
+
+    private fun startSttDownload(allowMetered: Boolean) {
+        if (SttModel.startDownload(this, allowMetered)) {
+            Toast.makeText(this, I18n.t("다운로드를 시작했습니다. 진행률은 알림에서 확인하세요."), Toast.LENGTH_LONG).show()
+            recreate()   // 설정 블록을 '다운로드 중' 상태로 갱신
+        } else {
+            Toast.makeText(this, I18n.t("다운로드를 시작하지 못했습니다. 저장공간·네트워크를 확인해주세요."), Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onPause() {

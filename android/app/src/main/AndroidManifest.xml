@@ -92,6 +92,16 @@
             android:name=".WidgetToggleReceiver"
             android:exported="false" />
 
+        <!-- STT 모델 다운로드 완료 감지. 시스템(DownloadManager)이 우리 패키지로 보내는
+             명시적 브로드캐스트라 exported=false 로도 수신된다. -->
+        <receiver
+            android:name=".SttModelReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

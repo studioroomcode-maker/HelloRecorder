@@ -29,6 +29,9 @@ class TranscribeWorker(
         val ctx = applicationContext
         // Pro 전용 + 설정 켜짐 + 모델 존재. 아니면 아무것도 하지 않는다(성공 처리 — 재시도 불필요).
         if (!Pro.isPro || !Prefs.isTranscribeEnabled(ctx)) return Result.success()
+        // 모델 다운로드가 끝나 있는데 아직 설치(이동)가 안 됐으면 여기서 마무리
+        // (완료 브로드캐스트를 놓쳐도 충전 시점에 자동 설치되도록 하는 안전망)
+        if (SttModel.isDownloading(ctx)) SttModel.finalizeIfDone(ctx)
         if (!Transcriber.isModelAvailable(ctx)) return Result.success()
 
         // DB 가 비어 있으면(재설치·이관) 사이드카에서 인덱스 복구
