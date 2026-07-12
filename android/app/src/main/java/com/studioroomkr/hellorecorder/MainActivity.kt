@@ -325,10 +325,13 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(outer)
 
-        // 3) 시스템 바(상태바/내비바) 영역만큼 패딩 → 위/아래 잘림 방지
+        // 3) 시스템 바(상태바/내비바) + 키보드(IME) 영역만큼 패딩 → 위/아래 잘림 방지.
+        // targetSdk 35+ 엣지투엣지에선 manifest 의 adjustResize 만으로는 부족하고
+        // IME 인셋을 직접 반영해야 키보드가 검색창을 가리지 않는다(화면이 줄며 스크롤 유지).
         ViewCompat.setOnApplyWindowInsetsListener(outer) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(0, bars.top, 0, bars.bottom)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(0, bars.top, 0, maxOf(bars.bottom, ime.bottom))
             insets
         }
 
@@ -2099,7 +2102,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopInlinePlay() {
-        Player.stop()
+        // 이 화면이 시작한 인라인 재생만 멈춘다. PlayerActivity 로 넘어갈 때 onStop 이
+        // 무조건 Player.stop() 을 부르면, 검색 결과 탭 → 발화 위치 자동 재생이
+        // (PlayerActivity.onCreate 직후에 오는 MainActivity.onStop 에서) 바로 죽는다.
+        val f = playingFile
+        if (f != null && Player.isLoaded(f)) Player.stop()
         uiHandler.removeCallbacks(playTick)
         playProgressBar?.visibility = View.GONE
         playButton?.text = "▶"

@@ -206,11 +206,18 @@ class PlayerActivity : AppCompatActivity() {
         }
         refreshBookmarks()
 
-        // 검색 결과에서 넘어온 경우: 해당 발화 위치부터 바로 재생
+        // 검색 결과에서 넘어온 경우: 해당 발화 위치부터 바로 재생.
+        // 주의: 액티비티 전환 시 이전 화면(파일 목록·이전 플레이어)의 onStop 은 이 화면의
+        // onResume *뒤에* 호출되고, 그 onStop 들이 Player.stop() 을 부른다. onCreate 에서
+        // 곧장 재생하면 시작하자마자 죽으므로, 이전 화면 정리가 끝난 뒤로 살짝 미룬다.
         val seekMs = intent.getLongExtra(EXTRA_SEEK_MS, -1L)
         if (seekMs >= 0) {
-            Player.toggle(file, onError = { showUnplayable() }) {}
-            Player.seekTo(seekMs)
+            handler.postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    Player.toggle(file, onError = { showUnplayable() }) {}
+                    Player.seekTo(seekMs)
+                }
+            }, AUTOPLAY_DELAY_MS)
         }
     }
 
@@ -350,5 +357,6 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_PATH = "extra_path"
         const val EXTRA_SEEK_MS = "extra_seek_ms"   // 검색 결과 → 발화 위치 바로 재생
         private const val MAX_TRANSCRIPT_ROWS = 100 // 전사문 표시 상한(긴 파일 UI 보호)
+        private const val AUTOPLAY_DELAY_MS = 600L  // 이전 화면 onStop(Player.stop) 회피용
     }
 }

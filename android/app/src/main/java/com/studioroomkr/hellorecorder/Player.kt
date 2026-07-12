@@ -12,6 +12,7 @@ import java.io.File
  *  - 특정 위치로 이동(seek), 북마크 점프
  */
 object Player {
+    private const val TAG = "HelloPlayer"
     private var mp: MediaPlayer? = null
     private var currentPath: String? = null
     private var speed: Float = 1.0f
@@ -46,7 +47,10 @@ object Player {
             player.prepare()
             applySpeed(player)
             player.start()
-        } catch (_: Exception) {
+            android.util.Log.i(TAG, "playing ${file.name} dur=${player.duration} playing=${player.isPlaying}")
+        } catch (e: Exception) {
+            // 손상 파일 등 정상 경로의 실패지만, 기기별 원인 추적을 위해 남긴다(개인정보 없음)
+            android.util.Log.w(TAG, "toggle failed for ${file.name}: $e")
             try { player.release() } catch (_: Exception) {}
             mp = null
             currentPath = null

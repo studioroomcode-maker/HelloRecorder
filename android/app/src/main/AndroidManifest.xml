@@ -43,9 +43,11 @@
             android:name=".ConsentActivity"
             android:exported="false" />
 
+        <!-- adjustResize: 키보드가 올라오면 화면을 줄여 검색창·목록이 가려지지 않게 -->
         <activity
             android:name=".MainActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".PlayerActivity"
