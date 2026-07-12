@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedDateKey: String? = null   // null = 전체
     private var selectedCategory: String? = null  // null = 전체 카테고리
     private var categoryChips: LinearLayout? = null
+    private var transcriptHits: LinearLayout? = null   // 내용(전사) 검색 결과 블록
     private var sortButton: Button? = null
     private val durationMsCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val tagCache = java.util.concurrent.ConcurrentHashMap<String, String>()   // 활동 태그(.lvl 집계)
@@ -1423,7 +1424,7 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this, ProActivity::class.java))
             })
         }
-        val searchEt = Theme.editText(this, "검색 (파일명, 라벨, 날짜, 길이)").apply {
+        val searchEt = Theme.editText(this, "검색 (파일명, 라벨, 날짜, 내용)").apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 .apply { setMargins(dp(6), dp(4), 0, dp(8)) }
             addTextChangedListener(object : TextWatcher {
@@ -1448,8 +1449,48 @@ class MainActivity : AppCompatActivity() {
         })
         refreshCategoryChips()
 
+        // 내용(전사) 검색 결과 — 검색어 입력 시 세그먼트 히트를 파일 목록 위에 표시
+        transcriptHits = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        parent.addView(transcriptHits)
+
         fileListContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         parent.addView(fileListContainer)
+    }
+
+    /** 전사 인덱스에서 검색어와 맞는 발화 세그먼트를 찾아 표시. 탭하면 그 위치로 재생 이동. */
+    private fun refreshTranscriptHits() {
+        val c = transcriptHits ?: return
+        c.removeAllViews()
+        val q = searchQuery
+        if (q.length < 2) return   // 한 글자는 잡음 매칭이 너무 많음
+        val hits = try { TranscriptStore.search(this, q, 30) } catch (_: Exception) { emptyList() }
+        if (hits.isEmpty()) return
+
+        fun fmtMs(ms: Long): String {
+            val s = ms / 1000
+            return "%d:%02d".format(s / 60, s % 60)
+        }
+        c.addView(Theme.dateHeader(this, I18n.f("🔎 내용 검색 (%d)", hits.size)))
+        for (h in hits) {
+            val f = Storage.fileForKey(this, h.key)
+            if (!f.exists()) continue
+            val day = h.key.substringBefore('/')
+            val pretty = if (day.length == 8) "${day.substring(4, 6)}.${day.substring(6, 8)}" else day
+            c.addView(Theme.body(this).apply {
+                text = "$pretty · ${fmtMs(h.startMs)} — ${h.text}"
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+                setOnClickListener {
+                    startActivity(
+                        Intent(this@MainActivity, PlayerActivity::class.java)
+                            .putExtra(PlayerActivity.EXTRA_PATH, f.absolutePath)
+                            .putExtra(PlayerActivity.EXTRA_SEEK_MS, h.startMs)
+                    )
+                }
+            })
+        }
+        c.addView(Theme.hint(this, "결과를 탭하면 그 발화 위치부터 재생됩니다. (자동 전사된 파일에서만 검색)"))
     }
 
     // ── 정렬 ──
@@ -1721,6 +1762,7 @@ class MainActivity : AppCompatActivity() {
         buildWeekStrip()   // 달력 점 갱신
         fileListContainer.removeAllViews()
         shownKeys.clear()
+        refreshTranscriptHits()   // 내용(전사) 검색 결과도 함께 갱신
         val dayDirs = Storage.listDayDirs(this)
         var shown = 0
         val cal = Calendar.getInstance()

@@ -127,6 +127,28 @@ class PlayerActivity : AppCompatActivity() {
         root.addView(voiceRow)
         loadVoiceOnsets()
 
+        // 전사문 (자동 전사 사이드카가 있을 때만) — 문장을 탭하면 그 위치로 이동
+        TranscriptStore.readSidecar(file)?.let { t ->
+            if (t.segments.isNotEmpty()) {
+                root.addView(Theme.sectionTitle(this, "전사문"))
+                root.addView(Theme.hint(this, "문장을 탭하면 그 위치부터 재생합니다. 기기 안에서 자동 전사된 내용이라 부정확할 수 있어요."))
+                val pad = (6 * resources.displayMetrics.density).toInt()
+                t.segments.take(MAX_TRANSCRIPT_ROWS).forEach { seg ->
+                    root.addView(Theme.body(this).apply {
+                        text = "${fmt(seg.startMs)}  ${seg.text}"
+                        setPadding(0, pad, 0, pad)
+                        setOnClickListener {
+                            if (!Player.isLoaded(file)) Player.toggle(file, onError = { showUnplayable() }) {}
+                            Player.seekTo(seg.startMs)
+                        }
+                    })
+                }
+                if (t.segments.size > MAX_TRANSCRIPT_ROWS) {
+                    root.addView(Theme.hint(this, I18n.f("…외 %d개 문장 (검색으로 찾아보세요)", t.segments.size - MAX_TRANSCRIPT_ROWS)))
+                }
+            }
+        }
+
         // 재생 속도
         root.addView(Theme.sectionTitle(this, "재생 속도"))
         val speedRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -183,6 +205,13 @@ class PlayerActivity : AppCompatActivity() {
             insets
         }
         refreshBookmarks()
+
+        // 검색 결과에서 넘어온 경우: 해당 발화 위치부터 바로 재생
+        val seekMs = intent.getLongExtra(EXTRA_SEEK_MS, -1L)
+        if (seekMs >= 0) {
+            Player.toggle(file, onError = { showUnplayable() }) {}
+            Player.seekTo(seekMs)
+        }
     }
 
     private fun doTrim(startMs: Long, endMs: Long) {
@@ -319,5 +348,7 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_PATH = "extra_path"
+        const val EXTRA_SEEK_MS = "extra_seek_ms"   // 검색 결과 → 발화 위치 바로 재생
+        private const val MAX_TRANSCRIPT_ROWS = 100 // 전사문 표시 상한(긴 파일 UI 보호)
     }
 }

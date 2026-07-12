@@ -229,6 +229,14 @@ object I18n {
         "보관 해제" to "Unkeep",
         "백업 내보내기" to "Export backup",
         "검색 (파일명, 라벨, 날짜)" to "Search (name, label, date)",
+        "검색 (파일명, 라벨, 날짜, 내용)" to "Search (name, label, date, spoken words)",
+        "🔎 내용 검색 (%d)" to "🔎 Spoken-word matches (%d)",
+        "결과를 탭하면 그 발화 위치부터 재생됩니다. (자동 전사된 파일에서만 검색)" to
+            "Tap a result to play from that spot. (Searches auto-transcribed files only)",
+        "전사문" to "Transcript",
+        "문장을 탭하면 그 위치부터 재생합니다. 기기 안에서 자동 전사된 내용이라 부정확할 수 있어요." to
+            "Tap a sentence to play from there. Transcribed on-device, so it may contain errors.",
+        "…외 %d개 문장 (검색으로 찾아보세요)" to "…and %d more sentences (try search)",
         "왼쪽 체크로 선택 → 일괄 삭제/보관. ‘보관’은 자동 삭제·공간확보에서 제외됩니다." to
             "Check on the left to select → bulk delete/keep. 'Keep' is excluded from auto-delete and cleanup.",
         "보관" to "Keep",
