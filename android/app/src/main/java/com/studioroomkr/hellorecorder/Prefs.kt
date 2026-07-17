@@ -152,16 +152,19 @@ object Prefs {
     }
 
     // ---- 보호 파일 (상대경로 키) ----
-    fun getProtected(ctx: Context): MutableSet<String> =
-        HashSet(prefs(ctx).getStringSet(KEY_PROTECTED, emptySet()) ?: emptySet())
+    // 파일별 메타(보관·라벨·카테고리·북마크)는 FileMetaStore(SQLite) 로 위임한다.
+    // 시그니처는 그대로라 호출부는 바뀌지 않는다. prefs(ctx) 를 먼저 불러 옛 파일 마이그레이션
+    // 마커가 준비되게 한다(FileMetaStore 마이그레이션이 그 위에서 옛 메타 키를 읽는다).
+    fun getProtected(ctx: Context): MutableSet<String> {
+        prefs(ctx); return FileMetaStore.getProtected(ctx)
+    }
 
-    fun isProtected(ctx: Context, key: String): Boolean =
-        getProtected(ctx).contains(key)
+    fun isProtected(ctx: Context, key: String): Boolean {
+        prefs(ctx); return FileMetaStore.isProtected(ctx, key)
+    }
 
     fun setProtected(ctx: Context, key: String, protectedOn: Boolean) {
-        val set = getProtected(ctx)
-        if (protectedOn) set.add(key) else set.remove(key)
-        prefs(ctx).edit().putStringSet(KEY_PROTECTED, set).apply()
+        prefs(ctx); FileMetaStore.setProtected(ctx, key, protectedOn)
     }
 
     // ---- 알람식 녹음 스케줄 (요일별 + 날짜별) ----
@@ -446,74 +449,108 @@ object Prefs {
         prefs(ctx).edit().putStringSet(KEY_CATEGORIES, set).apply()
     }
 
-    fun getCategory(ctx: Context, key: String): String =
-        prefs(ctx).getString(CAT_PREFIX + key, "") ?: ""
+    fun getCategory(ctx: Context, key: String): String {
+        prefs(ctx); return FileMetaStore.getCategory(ctx, key)
+    }
 
     fun setCategory(ctx: Context, key: String, name: String) {
-        val e = prefs(ctx).edit()
-        if (name.isBlank()) e.remove(CAT_PREFIX + key) else {
-            e.putString(CAT_PREFIX + key, name.trim())
-            addCategory(ctx, name)
+        prefs(ctx)
+        if (name.isBlank()) {
+            FileMetaStore.setCategory(ctx, key, "")
+        } else {
+            FileMetaStore.setCategory(ctx, key, name.trim())
+            addCategory(ctx, name)   // 카테고리명 집합(칩용)은 계속 Prefs 에(파일별 아님, 유한 집합)
         }
-        e.apply()
     }
 
     // ---- 파일 라벨/메모 ----
-    fun getLabel(ctx: Context, key: String): String =
-        prefs(ctx).getString(LABEL_PREFIX + key, "") ?: ""
+    fun getLabel(ctx: Context, key: String): String {
+        prefs(ctx); return FileMetaStore.getLabel(ctx, key)
+    }
 
     fun setLabel(ctx: Context, key: String, label: String) {
-        prefs(ctx).edit().putString(LABEL_PREFIX + key, label).apply()
+        prefs(ctx); FileMetaStore.setLabel(ctx, key, label)
     }
 
     fun removeLabel(ctx: Context, key: String) {
-        prefs(ctx).edit().remove(LABEL_PREFIX + key).apply()
+        prefs(ctx); FileMetaStore.removeLabel(ctx, key)
     }
 
     // ---- 북마크 (파일별 중요 지점, 밀리초 목록) ----
-    // 저장 형식: "12000,45000,90000" (쉼표 구분 ms)
     fun getBookmarks(ctx: Context, key: String): List<Long> {
-        val raw = prefs(ctx).getString(BOOKMARK_PREFIX + key, "") ?: ""
-        if (raw.isEmpty()) return emptyList()
-        return raw.split(",").mapNotNull { it.toLongOrNull() }.sorted()
+        prefs(ctx); return FileMetaStore.getBookmarks(ctx, key)
     }
 
     fun addBookmark(ctx: Context, key: String, ms: Long) {
         val list = getBookmarks(ctx, key).toMutableList()
         list.add(ms)
-        saveBookmarks(ctx, key, list)
+        FileMetaStore.setBookmarks(ctx, key, list)
     }
 
     fun removeBookmark(ctx: Context, key: String, ms: Long) {
         val list = getBookmarks(ctx, key).toMutableList()
         list.remove(ms)
-        saveBookmarks(ctx, key, list)
-    }
-
-    private fun saveBookmarks(ctx: Context, key: String, list: List<Long>) {
-        val raw = list.distinct().sorted().joinToString(",")
-        prefs(ctx).edit().putString(BOOKMARK_PREFIX + key, raw).apply()
+        FileMetaStore.setBookmarks(ctx, key, list)
     }
 
     fun clearBookmarks(ctx: Context, key: String) {
-        prefs(ctx).edit().remove(BOOKMARK_PREFIX + key).apply()
+        prefs(ctx); FileMetaStore.clearBookmarks(ctx, key)
     }
 
     /**
      * 파일 하나에 딸린 모든 파일별 메타데이터를 한 번에 제거(보호·라벨·북마크·카테고리).
-     * 삭제 경로가 이것 하나만 부르면 되도록 모아 둔다 — 예전엔 호출부마다 일부만 지워
-     * 삭제된 파일의 북마크·카테고리가 SharedPreferences 에 영구히 남았다.
-     * (전사 사이드카·검색 인덱스·.lvl 은 파일 사이드카라 Storage.deleteRecording 이 처리.)
+     * FileMetaStore 는 파일 하나 = 한 행이라 행 하나만 지우면 끝난다.
      */
     fun clearFileMeta(ctx: Context, key: String) {
-        val set = getProtected(ctx)
-        set.remove(key)
-        prefs(ctx).edit()
-            .putStringSet(KEY_PROTECTED, set)
-            .remove(LABEL_PREFIX + key)
-            .remove(BOOKMARK_PREFIX + key)
-            .remove(CAT_PREFIX + key)
-            .apply()
+        prefs(ctx); FileMetaStore.clearFileMeta(ctx, key)
+    }
+
+    // ---- FileMetaStore 로의 1회 마이그레이션 ----
+    // 첫 접근 시 옛 SharedPreferences 의 파일별 메타(protected 집합 + label_*/bookmark_*/cat_*)를
+    // 읽어 넘기고, 마커를 세운 뒤 옛 키들을 지운다. rows 콜백에서 DB 쓰기를 한 트랜잭션으로 처리.
+    private const val KEY_META_MIGRATED = "meta_migrated_to_db"
+
+    fun migrateFileMetaIfNeeded(ctx: Context, write: (Map<String, FileMetaStore.Meta>) -> Unit) {
+        val p = prefs(ctx)
+        if (p.getBoolean(KEY_META_MIGRATED, false)) return
+        val rows = HashMap<String, FileMetaStore.Meta>()
+        fun rowFor(key: String) = rows[key] ?: FileMetaStore.Meta()
+
+        val protectedSet = p.getStringSet(KEY_PROTECTED, emptySet()) ?: emptySet()
+        for (k in protectedSet) rows[k] = rowFor(k).copy(protectedOn = true)
+
+        val oldKeys = ArrayList<String>()
+        for ((k, v) in p.all) {
+            when {
+                k.startsWith(LABEL_PREFIX) -> {
+                    val fk = k.removePrefix(LABEL_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(label = s)
+                    oldKeys.add(k)
+                }
+                k.startsWith(BOOKMARK_PREFIX) -> {
+                    val fk = k.removePrefix(BOOKMARK_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(bookmarks = s)
+                    oldKeys.add(k)
+                }
+                k.startsWith(CAT_PREFIX) -> {
+                    val fk = k.removePrefix(CAT_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(category = s)
+                    oldKeys.add(k)
+                }
+            }
+        }
+
+        write(rows)   // DB 에 한 트랜잭션으로 기록
+
+        // 옛 파일별 키 정리 + 마커. protected 집합도 이제 DB 가 진실이라 비운다.
+        p.edit().apply {
+            oldKeys.forEach { remove(it) }
+            remove(KEY_PROTECTED)
+            putBoolean(KEY_META_MIGRATED, true)
+        }.apply()
     }
 
     // ---- 녹음 상태 (엔진 → UI) ----
