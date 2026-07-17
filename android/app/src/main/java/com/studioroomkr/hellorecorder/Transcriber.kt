@@ -4,14 +4,13 @@ import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import androidx.annotation.VisibleForTesting
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
@@ -35,28 +34,52 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
         fun fullText(): String = segments.joinToString(" ") { it.text }
     }
 
-    /** .m4a 한 개 전사. 디코드/추론 실패 시 예외 — 호출부(워커)가 파일 단위로 격리한다. */
+    /**
+     * .m4a 한 개 전사. 디코드/추론 실패 시 예외 — 호출부(워커)가 파일 단위로 격리한다.
+     *
+     * 디코더가 뱉는 대로 바로 recognizer 에 흘려보내고 전체 PCM 은 들고 있지 않는다.
+     * 메모리는 파일 길이와 무관하게 일정하다(0.5초 버퍼 하나).
+     */
     fun transcribe(file: File): Transcript {
-        val (samples, sampleRate) = decodeToFloat(file)
-        val audioMs = if (sampleRate > 0) samples.size * 1000L / sampleRate else 0L
         val segments = ArrayList<Segment>()
+        val pending = FloatArray(CHUNK)
+        var filled = 0
+        var fed = 0L          // recognizer 에 넣은 총 샘플 수(타임스탬프 기준)
+        var segStart = 0L
+        var rate = SAMPLE_RATE
 
         val stream = recognizer.createStream("")
         try {
-            var fed = 0
-            var segStart = 0L
-            while (fed < samples.size) {
-                val n = minOf(CHUNK, samples.size - fed)
-                stream.acceptWaveform(samples.copyOfRange(fed, fed + n), sampleRate)
-                fed += n
+            // rate 가 featConfig 와 달라도 sherpa 가 내부에서 리샘플한다.
+            fun feed(samples: FloatArray) {
+                stream.acceptWaveform(samples, rate)
+                fed += samples.size
                 while (recognizer.isReady(stream)) recognizer.decode(stream)
                 if (recognizer.isEndpoint(stream)) {
                     val text = recognizer.getResult(stream).text.trim()
                     if (text.isNotEmpty()) segments.add(Segment(segStart, text))
                     recognizer.reset(stream)
-                    segStart = fed * 1000L / sampleRate
+                    segStart = if (rate > 0) fed * 1000L / rate else 0L
                 }
             }
+
+            decodeStreaming(file) { chunk, count, sampleRate ->
+                rate = sampleRate
+                // 디코더 출력은 청크가 잘아서(AAC 프레임 ~20ms) CHUNK 로 모아서 넣는다.
+                var off = 0
+                while (off < count) {
+                    val n = minOf(CHUNK - filled, count - off)
+                    System.arraycopy(chunk, off, pending, filled, n)
+                    filled += n
+                    off += n
+                    if (filled == CHUNK) {
+                        feed(pending)
+                        filled = 0
+                    }
+                }
+            }
+            if (filled > 0) feed(pending.copyOf(filled))
+
             stream.inputFinished()
             while (recognizer.isReady(stream)) recognizer.decode(stream)
             val tail = recognizer.getResult(stream).text.trim()
@@ -64,6 +87,7 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
         } finally {
             stream.release()
         }
+        val audioMs = if (rate > 0) fed * 1000L / rate else 0L
         return Transcript(audioMs, segments)
     }
 
@@ -120,78 +144,102 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
             } catch (_: Throwable) { null }
         }
 
-        /** .m4a(AAC) → 모노 FloatArray([-1,1]) + 샘플레이트. 스테레오면 다운믹스. */
-        private fun decodeToFloat(file: File): Pair<FloatArray, Int> {
+        /**
+         * .m4a(AAC) → 모노 float([-1,1]) 청크를 디코드되는 대로 sink 로 흘려보낸다.
+         * sink(버퍼, 유효 샘플 수, 샘플레이트) — 버퍼는 재사용하므로 붙들지 말 것.
+         *
+         * 전체 PCM 을 모아두지 않는다. 1시간·16kHz 모노면 FloatArray 만 230MB 고, 예전엔
+         * 여기에 ByteArrayOutputStream·toByteArray()·ShortArray 사본과 모델의 네이티브
+         * 힙(~164MB)이 겹쳐 순간 수백 MB 였다. 앱이 1시간짜리 파일을 만드는 이상
+         * 이건 예외 상황이 아니라 정상 경로다.
+         *
+         * internal 인 이유: 전사 모델 없이도 디코드 경로만 계측 테스트로 확인하기 위해서다
+         * (TranscriberDecodeTest). 앱 코드에서는 transcribe() 로만 쓴다.
+         */
+        @VisibleForTesting
+        internal fun decodeStreaming(file: File, sink: (FloatArray, Int, Int) -> Unit) {
             val extractor = MediaExtractor()
-            extractor.setDataSource(file.absolutePath)
-            var trackIndex = -1
-            var format: MediaFormat? = null
-            for (i in 0 until extractor.trackCount) {
-                val f = extractor.getTrackFormat(i)
-                if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
-                    trackIndex = i; format = f; break
+            try {
+                extractor.setDataSource(file.absolutePath)
+                var trackIndex = -1
+                var format: MediaFormat? = null
+                for (i in 0 until extractor.trackCount) {
+                    val f = extractor.getTrackFormat(i)
+                    if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
+                        trackIndex = i; format = f; break
+                    }
                 }
-            }
-            val fmt = format ?: run { extractor.release(); throw IllegalStateException("오디오 트랙 없음") }
-            extractor.selectTrack(trackIndex)
+                val fmt = format ?: throw IllegalStateException("오디오 트랙 없음")
+                extractor.selectTrack(trackIndex)
 
-            val sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            val channels = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
-                fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-            val mime = fmt.getString(MediaFormat.KEY_MIME)!!
+                var sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                var channels = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
+                    fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
 
-            val codec = MediaCodec.createDecoderByType(mime)
-            codec.configure(fmt, null, null, 0)
-            codec.start()
+                val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
+                try {
+                    codec.configure(fmt, null, null, 0)
+                    codec.start()
 
-            val pcm = ByteArrayOutputStream()
-            val info = MediaCodec.BufferInfo()
-            var inEos = false
-            var outEos = false
-            while (!outEos) {
-                if (!inEos) {
-                    val inIdx = codec.dequeueInputBuffer(10_000)
-                    if (inIdx >= 0) {
-                        val inBuf = codec.getInputBuffer(inIdx)!!
-                        val size = extractor.readSampleData(inBuf, 0)
-                        if (size < 0) {
-                            codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                            inEos = true
-                        } else {
-                            codec.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
-                            extractor.advance()
+                    val info = MediaCodec.BufferInfo()
+                    var inEos = false
+                    var outEos = false
+                    var shorts = ShortArray(0)
+                    var mono = FloatArray(0)
+
+                    while (!outEos) {
+                        if (!inEos) {
+                            val inIdx = codec.dequeueInputBuffer(10_000)
+                            if (inIdx >= 0) {
+                                val inBuf = codec.getInputBuffer(inIdx)!!
+                                val size = extractor.readSampleData(inBuf, 0)
+                                if (size < 0) {
+                                    codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                    inEos = true
+                                } else {
+                                    codec.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
+                                    extractor.advance()
+                                }
+                            }
+                        }
+                        val outIdx = codec.dequeueOutputBuffer(info, 10_000)
+                        if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            // 디코더가 실제로 내보내는 형식이 컨테이너 헤더와 다를 수 있다.
+                            val out = codec.outputFormat
+                            sampleRate = out.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                            channels = out.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        } else if (outIdx >= 0) {
+                            if (info.size > 0 && channels > 0) {
+                                val n = info.size / 2
+                                if (shorts.size < n) shorts = ShortArray(n)
+                                val outBuf = codec.getOutputBuffer(outIdx)!!
+                                outBuf.position(info.offset)
+                                outBuf.limit(info.offset + info.size)
+                                outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts, 0, n)
+
+                                val frames = n / channels
+                                if (mono.size < frames) mono = FloatArray(frames)
+                                if (channels == 1) {
+                                    for (i in 0 until frames) mono[i] = shorts[i] / 32768f
+                                } else {
+                                    for (i in 0 until frames) {
+                                        var sum = 0
+                                        for (c in 0 until channels) sum += shorts[i * channels + c]
+                                        mono[i] = (sum / channels) / 32768f
+                                    }
+                                }
+                                sink(mono, frames, sampleRate)
+                            }
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outEos = true
+                            codec.releaseOutputBuffer(outIdx, false)
                         }
                     }
+                } finally {
+                    codec.release()
                 }
-                val outIdx = codec.dequeueOutputBuffer(info, 10_000)
-                if (outIdx >= 0) {
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outEos = true
-                    if (info.size > 0) {
-                        val outBuf = codec.getOutputBuffer(outIdx)!!
-                        val chunk = ByteArray(info.size)
-                        outBuf.position(info.offset)
-                        outBuf.get(chunk, 0, info.size)
-                        pcm.write(chunk)
-                    }
-                    codec.releaseOutputBuffer(outIdx, false)
-                }
+            } finally {
+                extractor.release()
             }
-            codec.stop(); codec.release(); extractor.release()
-
-            val bytes = pcm.toByteArray()
-            val shortBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-            val n = shortBuf.remaining()
-            val shorts = ShortArray(n); shortBuf.get(shorts)
-            val samples = if (channels <= 1) {
-                FloatArray(n) { shorts[it] / 32768f }
-            } else {
-                FloatArray(n / channels) { i ->
-                    var sum = 0
-                    for (c in 0 until channels) sum += shorts[i * channels + c]
-                    (sum / channels) / 32768f
-                }
-            }
-            return samples to sampleRate
         }
     }
 }
