@@ -16,7 +16,7 @@
 <body>
 
 <h1>HelloRecorder — 개인정보처리방침 (Privacy Policy)</h1>
-<p class="meta">최종 업데이트 / Last updated: 2026-06-16 · 개발자 / Developer: Studioroom · 문의 / Contact: studioroom.skb@gmail.com</p>
+<p class="meta">최종 업데이트 / Last updated: 2026-07-17 · 개발자 / Developer: Studioroom · 문의 / Contact: contact@studioroomkr.com</p>
 
 <hr>
 
@@ -38,7 +38,13 @@
   <li><strong>사용 중에만(while-in-use)</strong> 위치를 확인하며, <strong>백그라운드 위치는 사용하지 않습니다.</strong></li>
   <li>이 기능을 쓰지 않으면 위치 정보는 수집되지 않으며, 위치 좌표는 기기 내부에만 저장됩니다.</li>
 </ul>
-<h3>다. 수집하지 않는 것</h3>
+<h3>다. 전사(받아쓰기) — 선택</h3>
+<ul>
+  <li>‘말한 내용으로 검색’을 켜면 녹음의 음성을 텍스트로 옮겨 검색에 사용합니다.</li>
+  <li>전사는 <strong>기기 안에서만</strong> 수행됩니다(온디바이스). 오디오를 어디로도 보내지 않으며, 전사 결과와 검색 색인도 기기 내부에만 저장됩니다.</li>
+  <li>이 기능에 필요한 음성인식 모델 파일은 인터넷에서 내려받습니다(아래 5항).</li>
+</ul>
+<h3>라. 수집하지 않는 것</h3>
 <ul>
   <li>계정·이름·이메일·전화번호 등 개인 식별 정보, 광고 식별자, 분석 데이터를 수집하지 않습니다.</li>
 </ul>
@@ -52,20 +58,26 @@
 
 <h2>4. 제3자 제공·공유</h2>
 <ul>
-  <li>앱은 어떤 데이터도 제3자에게 판매·공유·전송하지 않습니다.</li>
+  <li>개발자는 서버를 운영하지 않습니다. 녹음 오디오·전사 결과·녹음 장소 설정을 개발자나 제3자에게 판매·공유·전송하지 않습니다.</li>
   <li>사용자가 ‘공유/내보내기’로 직접 선택해 다른 앱(메일·드라이브·메신저 등)으로 보내는 경우에만, 사용자의 의사에 따라 파일이 전달됩니다.</li>
+  <li>다만 아래 5항의 선택 기능을 쓰면 그 기능에 필요한 범위에서 제3자 서비스와 네트워크 통신이 발생합니다(녹음 내용은 포함되지 않습니다).</li>
 </ul>
 
-<h2>5. 지도(OpenStreetMap)</h2>
-<p>‘위치 기반 녹음’의 지도 화면은 OpenStreetMap 타일을 사용하며, 지도를 표시하기 위해 인터넷으로 타일 이미지를 내려받습니다.
-이 과정에서 사용자의 녹음·위치 데이터는 전송되지 않습니다.</p>
+<h2>5. 제3자 서비스와의 통신 (선택 기능 사용 시)</h2>
+<p>아래 기능을 쓸 때만 인터넷 통신이 일어납니다. 어느 경우에도 녹음 오디오와 전사 결과는 전송되지 않습니다.</p>
+<ul>
+  <li><strong>지도(OpenStreetMap):</strong> ‘위치 기반 녹음’의 지도 화면은 OpenStreetMap 타일을 사용하며, 지도를 표시하기 위해 타일 이미지를 내려받습니다. 이때 <strong>보고 있는 지도 영역의 타일 좌표</strong>가 타일 서버에 전달됩니다(현재 위치 주변으로 지도를 열면 그 주변 영역이 됩니다). 저장된 녹음 장소 좌표 자체를 전송하지는 않습니다.</li>
+  <li><strong>음성인식 모델 다운로드(Hugging Face):</strong> ‘말한 내용으로 검색’을 켤 때 모델 파일(약 133MB)을 내려받습니다. 다운로드 요청 외의 사용자 데이터는 보내지 않습니다.</li>
+  <li><strong>결제(Google Play 결제):</strong> Pro 구매·복원은 Google Play 결제로 처리되며 결제 정보는 Google 이 처리합니다. 개발자는 결제 수단 정보를 받지 않습니다.</li>
+</ul>
+<p>위 서비스들의 데이터 처리에는 각 제공자의 방침이 적용됩니다.</p>
 
 <h2>6. 권한</h2>
 <ul>
   <li>마이크: 녹음</li>
   <li>위치(사용 중에만): 위치 기반 녹음(선택) — 백그라운드 위치 미사용</li>
   <li>알림·포그라운드 서비스: 백그라운드 녹음 유지 및 상태 표시</li>
-  <li>인터넷: 지도 타일 다운로드</li>
+  <li>인터넷: 지도 타일 다운로드, 음성인식 모델 다운로드, Google Play 결제 — 녹음·전사 업로드에는 사용하지 않음</li>
   <li>부팅 시 실행: 재부팅 후 녹음 자동 재개(사용자가 켜 둔 경우)</li>
 </ul>
 
@@ -76,7 +88,7 @@
 <p>상대방의 동의 없는 통화·대화 녹음은 지역에 따라 법으로 제한될 수 있으며, 앱 사용에 따른 책임은 사용자 본인에게 있습니다.</p>
 
 <h2>9. 변경 및 문의</h2>
-<p>본 방침은 변경될 수 있으며, 변경 시 이 페이지에 최종 업데이트 일자와 함께 게시합니다. 문의: studioroom.skb@gmail.com</p>
+<p>본 방침은 변경될 수 있으며, 변경 시 이 페이지에 최종 업데이트 일자와 함께 게시합니다. 문의: contact@studioroomkr.com</p>
 
 <hr>
 
@@ -98,7 +110,13 @@ This policy explains what data the App uses and how it is handled.</p>
   <li>Location is used <strong>while-in-use only</strong>; <strong>background location is not used.</strong></li>
   <li>If you don't use this feature, no location is collected. Zone coordinates are stored only on your device.</li>
 </ul>
-<h3>c. What we do not collect</h3>
+<h3>c. Transcription (optional)</h3>
+<ul>
+  <li>When "Search by what was said" is enabled, the App converts recorded speech to text for search.</li>
+  <li>Transcription runs <strong>entirely on your device</strong>. Audio is never sent anywhere, and transcripts and the search index are stored only on your device.</li>
+  <li>The speech model this feature needs is downloaded from the internet (see section 5).</li>
+</ul>
+<h3>d. What we do not collect</h3>
 <ul>
   <li>No personal identifiers (name, email, phone), advertising IDs, or analytics.</li>
 </ul>
@@ -112,19 +130,26 @@ This policy explains what data the App uses and how it is handled.</p>
 
 <h2>4. Sharing</h2>
 <ul>
-  <li>The App does not sell, share, or transmit any data to third parties.</li>
+  <li>The developer runs no server. Your recordings, transcripts, and recording-location settings are never sold, shared, or transmitted to the developer or to third parties.</li>
   <li>Files leave the device only when you explicitly choose to share/export them to another app (mail, cloud, messenger).</li>
+  <li>However, using the optional features in section 5 does cause network traffic to third-party services, limited to what those features need (your recordings are never included).</li>
 </ul>
 
-<h2>5. Maps (OpenStreetMap)</h2>
-<p>The map screen for "Location-based recording" uses OpenStreetMap tiles and downloads tile images over the internet to render the map. Your recordings and device location are not transmitted in this process.</p>
+<h2>5. Third-party services (only for optional features)</h2>
+<p>Network access happens only when you use the features below. In none of these cases are your recordings or transcripts transmitted.</p>
+<ul>
+  <li><strong>Maps (OpenStreetMap):</strong> The map screen for "Location-based recording" uses OpenStreetMap tiles and downloads tile images to render the map. This sends <strong>the tile coordinates of the map area you are viewing</strong> to the tile server (if you open the map centred on your position, that is the surrounding area). Your saved zone coordinates themselves are not transmitted.</li>
+  <li><strong>Speech model download (Hugging Face):</strong> Enabling "Search by what was said" downloads the model file (~133MB). Nothing beyond the download request is sent.</li>
+  <li><strong>Payments (Google Play Billing):</strong> Buying or restoring Pro is handled by Google Play Billing; Google processes the payment. The developer never receives your payment details.</li>
+</ul>
+<p>Each provider's own policy governs how they handle that traffic.</p>
 
 <h2>6. Permissions</h2>
 <ul>
   <li>Microphone: recording</li>
   <li>Location (while-in-use): location-based recording (optional) — no background location</li>
   <li>Notifications / Foreground service: keep background recording alive and show status</li>
-  <li>Internet: download map tiles</li>
+  <li>Internet: map tiles, speech-model download, Google Play billing — never used to upload recordings or transcripts</li>
   <li>Boot completed: resume recording after reboot (if you left it on)</li>
 </ul>
 
@@ -135,7 +160,7 @@ This policy explains what data the App uses and how it is handled.</p>
 <p>Recording calls or conversations without consent may be restricted by law in your region. You are solely responsible for your use.</p>
 
 <h2>9. Changes &amp; Contact</h2>
-<p>This policy may change; updates will be posted here with a new "Last updated" date. Contact: studioroom.skb@gmail.com</p>
+<p>This policy may change; updates will be posted here with a new "Last updated" date. Contact: contact@studioroomkr.com</p>
 
 </body>
 </html>

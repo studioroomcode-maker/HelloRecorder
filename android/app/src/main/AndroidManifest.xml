@@ -21,9 +21,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:name=".App"
         android:label="HelloRecorder"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:theme="@style/Theme.HelloRecorder">
 
         <activity
@@ -40,9 +43,11 @@
             android:name=".ConsentActivity"
             android:exported="false" />
 
+        <!-- adjustResize: 키보드가 올라오면 화면을 줄여 검색창·목록이 가려지지 않게 -->
         <activity
             android:name=".MainActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".PlayerActivity"
@@ -69,6 +74,8 @@
             </intent-filter>
         </receiver>
 
+        <!-- 위젯 프로바이더: 시스템이 APPWIDGET_UPDATE 를 보내야 하므로 exported 필수.
+             커스텀 액션은 처리하지 않는다(외부 브로드캐스트 표면 제거). -->
         <receiver
             android:name=".RecorderWidget"
             android:exported="true">
@@ -78,6 +85,21 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/recorder_widget_info" />
+        </receiver>
+
+        <!-- 위젯 '정지' 버튼 전용. 우리 앱의 PendingIntent 로만 도달 가능. -->
+        <receiver
+            android:name=".WidgetToggleReceiver"
+            android:exported="false" />
+
+        <!-- STT 모델 다운로드 완료 감지. 시스템(DownloadManager)이 우리 패키지로 보내는
+             명시적 브로드캐스트라 exported=false 로도 수신된다. -->
+        <receiver
+            android:name=".SttModelReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
         </receiver>
 
         <provider

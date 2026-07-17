@@ -48,7 +48,8 @@ object AudioEditor {
             val dstTrack = muxer.addTrack(format)
             muxer.start()
 
-            // 시작 지점으로 이동
+            // 시작 지점으로 이동. SEEK_TO_CLOSEST_SYNC 는 startMs 이전의 싱크 프레임으로
+            // 갈 수 있어, 실제 첫 샘플 시각은 startMs 와 다를 수 있다.
             extractor.seekTo(startMs * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
             val maxChunk = 256 * 1024
@@ -56,16 +57,25 @@ object AudioEditor {
             val info = MediaCodec.BufferInfo()
             val endUs = endMs * 1000
 
+            // 결과 파일의 PTS 를 0 부터 다시 맞춘다. 원본 시각을 그대로 두면 잘라낸 파일의
+            // 첫 샘플이 startMs 부터 시작해, 기기에 따라 앞에 그만큼 지연·무음이 생기거나
+            // 길이가 어긋난다. 첫 샘플 시각을 빼서 항상 0 에서 시작하게 한다.
+            var baseUs = -1L
+
             while (true) {
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
                 val sampleTimeUs = extractor.sampleTime
                 if (sampleTimeUs > endUs) break
+                if (baseUs < 0) baseUs = sampleTimeUs
 
                 info.offset = 0
                 info.size = size
-                info.presentationTimeUs = sampleTimeUs
-                info.flags = extractor.sampleFlags
+                info.presentationTimeUs = sampleTimeUs - baseUs
+                // extractor 의 SAMPLE_FLAG_* 와 muxer 가 기대하는 BUFFER_FLAG_* 는 서로 다른
+                // 상수 체계다. 지금은 값이 우연히 겹쳐 무해했지만, sync 여부만 명시적으로 옮긴다.
+                info.flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+                    MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                 muxer.writeSampleData(dstTrack, buffer, info)
                 extractor.advance()
             }

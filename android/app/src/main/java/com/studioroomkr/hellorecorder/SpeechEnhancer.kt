@@ -133,24 +133,38 @@ class SpeechEnhancer private constructor(
 
     /** GTCRN 한 프레임 추론. enh(257*2) 반환, 실패 시 null. */
     private fun runModel(): FloatArray? {
+        // 네이티브 리소스(텐서·Result)는 매 프레임 생성된다. session.run() 또는 출력 접근에서
+        // 예외가 나도 누수되지 않도록 finally 에서 항상 닫는다(이전엔 성공 경로에서만 닫았음).
+        var mixT: OnnxTensor? = null
+        var convT: OnnxTensor? = null
+        var traT: OnnxTensor? = null
+        var interT: OnnxTensor? = null
+        var res: OrtSession.Result? = null
         return try {
-            val mixT = OnnxTensor.createTensor(env, FloatBuffer.wrap(mix), longArrayOf(1, BINS.toLong(), 1, 2))
-            val convT = OnnxTensor.createTensor(env, FloatBuffer.wrap(convCache), longArrayOf(2, 1, 16, 16, 33))
-            val traT = OnnxTensor.createTensor(env, FloatBuffer.wrap(traCache), longArrayOf(2, 3, 1, 1, 16))
-            val interT = OnnxTensor.createTensor(env, FloatBuffer.wrap(interCache), longArrayOf(2, 1, 33, 16))
+            mixT = OnnxTensor.createTensor(env, FloatBuffer.wrap(mix), longArrayOf(1, BINS.toLong(), 1, 2))
+            convT = OnnxTensor.createTensor(env, FloatBuffer.wrap(convCache), longArrayOf(2, 1, 16, 16, 33))
+            traT = OnnxTensor.createTensor(env, FloatBuffer.wrap(traCache), longArrayOf(2, 3, 1, 1, 16))
+            interT = OnnxTensor.createTensor(env, FloatBuffer.wrap(interCache), longArrayOf(2, 1, 33, 16))
             val inputs = mapOf(
                 "mix" to mixT, "conv_cache" to convT,
                 "tra_cache" to traT, "inter_cache" to interT,
             )
-            val res = session.run(inputs)
+            res = session.run(inputs)
             val enh = FloatArray(BINS * 2)
             (res.get("enh").get() as OnnxTensor).floatBuffer.get(enh)
             (res.get("conv_cache_out").get() as OnnxTensor).floatBuffer.get(convCache)
             (res.get("tra_cache_out").get() as OnnxTensor).floatBuffer.get(traCache)
             (res.get("inter_cache_out").get() as OnnxTensor).floatBuffer.get(interCache)
-            res.close(); mixT.close(); convT.close(); traT.close(); interT.close()
             enh
-        } catch (_: Throwable) { null }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            try { res?.close() } catch (_: Throwable) {}
+            try { mixT?.close() } catch (_: Throwable) {}
+            try { convT?.close() } catch (_: Throwable) {}
+            try { traT?.close() } catch (_: Throwable) {}
+            try { interT?.close() } catch (_: Throwable) {}
+        }
     }
 
     fun close() {

@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# sherpa-onnx AAR 은 더 이상 app/libs 에 두지 않는다 — settings.gradle.kts 의 ivy 저장소가
+# GitHub 릴리스에서 받고 verifySherpaAar 가 SHA-256 을 검증한다. 예전 로컬 사본만 무시.
+app/libs/*.aar

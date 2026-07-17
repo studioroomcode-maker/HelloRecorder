@@ -10,7 +10,8 @@ import java.util.Calendar
  *  - threshold        : 무음 임계값 (슬라이더)
  *  - protected files  : 자동 삭제 제외 (상대경로 키)
  *  - hours            : 요일별 녹음 허용 시간대
- *  - recordingEnabled : 마지막 켜짐 상태 (재부팅 자동 시작 판단)
+ *  - recordingEnabled : 사용자가 켜 두려는 **의도**. "지금 녹음 중"이 아니다 —
+ *    실제 동작 여부는 RecordingService.isRunning() 이 진실이다(둘은 어긋날 수 있다).
  *  - bitRate          : 녹음 품질
  *  - appLock          : 앱 진입 잠금 사용 여부
  *  - labels           : 파일별 라벨/메모
@@ -39,6 +40,9 @@ object Prefs {
     private const val KEY_VOICE_MODE = "voice_mode"
     private const val KEY_SILERO = "silero_confirm"
     private const val KEY_VOICE_EMPHASIS = "voice_emphasis"
+    private const val KEY_DISTANCE_REDUCE = "distance_reduce"
+    private const val KEY_TRANSCRIBE = "auto_transcribe"
+    private const val KEY_STT_DL_IDS = "stt_dl_ids"   // 진행 중인 모델 다운로드 ID(쉼표 구분)
     // 알람식 스케줄: 요일별(dow_0..6) + 특정 날짜(date_yyyymmdd) 오버라이드
     //   각 항목: _en(켜짐), _s(시작 분, 0~1439), _e(끝 분, 0~1439)
     //   시작==끝 → 24시간 녹음 / 시작<끝 → [s,e) / 시작>끝 → 자정 넘김
@@ -56,6 +60,9 @@ object Prefs {
     // 녹음 상태 (엔진이 갱신)
     private const val KEY_CUR_LEVEL = "cur_level"
     private const val KEY_IS_CAPTURING = "is_capturing"
+    // 인코딩 실패(빈/깨진 녹음) 누적 — 사용자 가시화용
+    private const val KEY_ENCODE_FAIL_COUNT = "encode_fail_count"
+    private const val KEY_ENCODE_FAIL_LAST = "encode_fail_last"   // ms
     // 일별 배터리 소모 로그
     private const val BATT_PREFIX = "batt_"            // batt_yyyymmdd -> 누적 소모 %(Float)
     private const val KEY_BATT_LAST_LEVEL = "batt_last_level"
@@ -145,16 +152,19 @@ object Prefs {
     }
 
     // ---- 보호 파일 (상대경로 키) ----
-    fun getProtected(ctx: Context): MutableSet<String> =
-        HashSet(prefs(ctx).getStringSet(KEY_PROTECTED, emptySet()) ?: emptySet())
+    // 파일별 메타(보관·라벨·카테고리·북마크)는 FileMetaStore(SQLite) 로 위임한다.
+    // 시그니처는 그대로라 호출부는 바뀌지 않는다. prefs(ctx) 를 먼저 불러 옛 파일 마이그레이션
+    // 마커가 준비되게 한다(FileMetaStore 마이그레이션이 그 위에서 옛 메타 키를 읽는다).
+    fun getProtected(ctx: Context): MutableSet<String> {
+        prefs(ctx); return FileMetaStore.getProtected(ctx)
+    }
 
-    fun isProtected(ctx: Context, key: String): Boolean =
-        getProtected(ctx).contains(key)
+    fun isProtected(ctx: Context, key: String): Boolean {
+        prefs(ctx); return FileMetaStore.isProtected(ctx, key)
+    }
 
     fun setProtected(ctx: Context, key: String, protectedOn: Boolean) {
-        val set = getProtected(ctx)
-        if (protectedOn) set.add(key) else set.remove(key)
-        prefs(ctx).edit().putStringSet(KEY_PROTECTED, set).apply()
+        prefs(ctx); FileMetaStore.setProtected(ctx, key, protectedOn)
     }
 
     // ---- 알람식 녹음 스케줄 (요일별 + 날짜별) ----
@@ -232,13 +242,10 @@ object Prefs {
         return inWindow(sched.startMin, sched.endMin, minute)
     }
 
-    private fun inWindow(startMin: Int, endMin: Int, minute: Int): Boolean {
-        if (startMin == endMin) return true          // 24시간
-        return if (startMin < endMin) minute in startMin until endMin
-        else minute >= startMin || minute < endMin   // 자정 넘김
-    }
+    private fun inWindow(startMin: Int, endMin: Int, minute: Int): Boolean =
+        RecordingLogic.inWindow(startMin, endMin, minute)
 
-    // ---- 녹음 켜짐 상태 ----
+    // ---- 녹음 켜짐 '의도' (실제 동작 여부는 RecordingService.isRunning()) ----
     fun isRecordingEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_RECORDING_ENABLED, false)
 
@@ -289,6 +296,14 @@ object Prefs {
 
     fun setConsentAccepted(ctx: Context, accepted: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_CONSENT, accepted).apply()
+    }
+
+    // ---- 측정 로깅(기기 실측용, 기본 꺼짐) ----
+    fun isMeasurementEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("measurement_enabled", false)
+
+    fun setMeasurementEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean("measurement_enabled", on).apply()
     }
 
     // ---- 앱 잠금 ----
@@ -354,8 +369,8 @@ object Prefs {
     }
 
     // ---- 사람 목소리 우선 모드 (음성 인식 기반 트리거) ----
-    // 켜면 음성에 튜닝된 소스 + AGC/노이즈서프레서 + 음성 대역 검출로,
-    // 작은 목소리도 더 잘 잡고 비음성 소음은 덜 잡는다.
+    // 켜면 음성 대역 검출 + VAD 로 녹음 트리거를 판단해,
+    // 작은 목소리도 더 잘 잡고 비음성 소음은 덜 잡는다. (저장 음질은 안 건드림)
     fun isVoiceModeEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_VOICE_MODE, false)
 
@@ -372,13 +387,40 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_SILERO, on).apply()
     }
 
-    // 목소리 강조 (켜면: AGC·노이즈억제·음성튜닝 마이크 + GTCRN 잡음 제거를 함께 적용).
+    // 목소리 강조 (켜면: 노이즈억제·음성튜닝 마이크 + GTCRN 잡음 제거를 함께 적용. AGC 미사용).
     // 끄면 원본 그대로 녹음. 저장 오디오를 가공하므로 기본 꺼짐.
     fun isVoiceEmphasisEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_VOICE_EMPHASIS, false)
 
     fun setVoiceEmphasisEnabled(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_VOICE_EMPHASIS, on).apply()
+    }
+
+    // 먼 소리 줄이기 (Pro). 잡음 제거 없이 근접 우선 익스팬더만 저장 오디오에 적용 —
+    // 원음 질감은 유지하면서 멀리 있는(약한) 소리만 낮춘다. 저장 오디오를 가공하므로 기본 꺼짐.
+    fun isDistanceReduceEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_DISTANCE_REDUCE, false)
+
+    fun setDistanceReduceEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DISTANCE_REDUCE, on).apply()
+    }
+
+    // 자동 전사 (Pro). 충전 중에만 배치로 녹음을 텍스트로 바꿔 검색을 가능하게 한다.
+    // STT 모델(별도 다운로드) 이 있어야 실제로 동작. 기본 꺼짐.
+    fun isTranscribeEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_TRANSCRIBE, false)
+
+    fun setTranscribeEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_TRANSCRIBE, on).apply()
+    }
+
+    // 진행 중인 STT 모델 다운로드(DownloadManager) ID 목록. 비어 있으면 다운로드 없음.
+    fun getSttDownloadIds(ctx: Context): List<Long> =
+        prefs(ctx).getString(KEY_STT_DL_IDS, "")!!
+            .split(',').mapNotNull { it.trim().toLongOrNull() }
+
+    fun setSttDownloadIds(ctx: Context, ids: List<Long>) {
+        prefs(ctx).edit().putString(KEY_STT_DL_IDS, ids.joinToString(",")).apply()
     }
 
     // ---- 자동 삭제 보관 기간 (시간) ----
@@ -415,57 +457,108 @@ object Prefs {
         prefs(ctx).edit().putStringSet(KEY_CATEGORIES, set).apply()
     }
 
-    fun getCategory(ctx: Context, key: String): String =
-        prefs(ctx).getString(CAT_PREFIX + key, "") ?: ""
+    fun getCategory(ctx: Context, key: String): String {
+        prefs(ctx); return FileMetaStore.getCategory(ctx, key)
+    }
 
     fun setCategory(ctx: Context, key: String, name: String) {
-        val e = prefs(ctx).edit()
-        if (name.isBlank()) e.remove(CAT_PREFIX + key) else {
-            e.putString(CAT_PREFIX + key, name.trim())
-            addCategory(ctx, name)
+        prefs(ctx)
+        if (name.isBlank()) {
+            FileMetaStore.setCategory(ctx, key, "")
+        } else {
+            FileMetaStore.setCategory(ctx, key, name.trim())
+            addCategory(ctx, name)   // 카테고리명 집합(칩용)은 계속 Prefs 에(파일별 아님, 유한 집합)
         }
-        e.apply()
     }
 
     // ---- 파일 라벨/메모 ----
-    fun getLabel(ctx: Context, key: String): String =
-        prefs(ctx).getString(LABEL_PREFIX + key, "") ?: ""
+    fun getLabel(ctx: Context, key: String): String {
+        prefs(ctx); return FileMetaStore.getLabel(ctx, key)
+    }
 
     fun setLabel(ctx: Context, key: String, label: String) {
-        prefs(ctx).edit().putString(LABEL_PREFIX + key, label).apply()
+        prefs(ctx); FileMetaStore.setLabel(ctx, key, label)
     }
 
     fun removeLabel(ctx: Context, key: String) {
-        prefs(ctx).edit().remove(LABEL_PREFIX + key).apply()
+        prefs(ctx); FileMetaStore.removeLabel(ctx, key)
     }
 
     // ---- 북마크 (파일별 중요 지점, 밀리초 목록) ----
-    // 저장 형식: "12000,45000,90000" (쉼표 구분 ms)
     fun getBookmarks(ctx: Context, key: String): List<Long> {
-        val raw = prefs(ctx).getString(BOOKMARK_PREFIX + key, "") ?: ""
-        if (raw.isEmpty()) return emptyList()
-        return raw.split(",").mapNotNull { it.toLongOrNull() }.sorted()
+        prefs(ctx); return FileMetaStore.getBookmarks(ctx, key)
     }
 
     fun addBookmark(ctx: Context, key: String, ms: Long) {
         val list = getBookmarks(ctx, key).toMutableList()
         list.add(ms)
-        saveBookmarks(ctx, key, list)
+        FileMetaStore.setBookmarks(ctx, key, list)
     }
 
     fun removeBookmark(ctx: Context, key: String, ms: Long) {
         val list = getBookmarks(ctx, key).toMutableList()
         list.remove(ms)
-        saveBookmarks(ctx, key, list)
-    }
-
-    private fun saveBookmarks(ctx: Context, key: String, list: List<Long>) {
-        val raw = list.distinct().sorted().joinToString(",")
-        prefs(ctx).edit().putString(BOOKMARK_PREFIX + key, raw).apply()
+        FileMetaStore.setBookmarks(ctx, key, list)
     }
 
     fun clearBookmarks(ctx: Context, key: String) {
-        prefs(ctx).edit().remove(BOOKMARK_PREFIX + key).apply()
+        prefs(ctx); FileMetaStore.clearBookmarks(ctx, key)
+    }
+
+    /**
+     * 파일 하나에 딸린 모든 파일별 메타데이터를 한 번에 제거(보호·라벨·북마크·카테고리).
+     * FileMetaStore 는 파일 하나 = 한 행이라 행 하나만 지우면 끝난다.
+     */
+    fun clearFileMeta(ctx: Context, key: String) {
+        prefs(ctx); FileMetaStore.clearFileMeta(ctx, key)
+    }
+
+    // ---- FileMetaStore 로의 1회 마이그레이션 ----
+    // 첫 접근 시 옛 SharedPreferences 의 파일별 메타(protected 집합 + label_*/bookmark_*/cat_*)를
+    // 읽어 넘기고, 마커를 세운 뒤 옛 키들을 지운다. rows 콜백에서 DB 쓰기를 한 트랜잭션으로 처리.
+    private const val KEY_META_MIGRATED = "meta_migrated_to_db"
+
+    fun migrateFileMetaIfNeeded(ctx: Context, write: (Map<String, FileMetaStore.Meta>) -> Unit) {
+        val p = prefs(ctx)
+        if (p.getBoolean(KEY_META_MIGRATED, false)) return
+        val rows = HashMap<String, FileMetaStore.Meta>()
+        fun rowFor(key: String) = rows[key] ?: FileMetaStore.Meta()
+
+        val protectedSet = p.getStringSet(KEY_PROTECTED, emptySet()) ?: emptySet()
+        for (k in protectedSet) rows[k] = rowFor(k).copy(protectedOn = true)
+
+        val oldKeys = ArrayList<String>()
+        for ((k, v) in p.all) {
+            when {
+                k.startsWith(LABEL_PREFIX) -> {
+                    val fk = k.removePrefix(LABEL_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(label = s)
+                    oldKeys.add(k)
+                }
+                k.startsWith(BOOKMARK_PREFIX) -> {
+                    val fk = k.removePrefix(BOOKMARK_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(bookmarks = s)
+                    oldKeys.add(k)
+                }
+                k.startsWith(CAT_PREFIX) -> {
+                    val fk = k.removePrefix(CAT_PREFIX)
+                    val s = v as? String ?: ""
+                    if (s.isNotEmpty()) rows[fk] = rowFor(fk).copy(category = s)
+                    oldKeys.add(k)
+                }
+            }
+        }
+
+        write(rows)   // DB 에 한 트랜잭션으로 기록
+
+        // 옛 파일별 키 정리 + 마커. protected 집합도 이제 DB 가 진실이라 비운다.
+        p.edit().apply {
+            oldKeys.forEach { remove(it) }
+            remove(KEY_PROTECTED)
+            putBoolean(KEY_META_MIGRATED, true)
+        }.apply()
     }
 
     // ---- 녹음 상태 (엔진 → UI) ----
@@ -481,6 +574,33 @@ object Prefs {
 
     fun isCapturing(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_IS_CAPTURING, false)
+
+    // ---- 인코딩 실패(빈/깨진 녹음) 기록 — 가시화용 ----
+    // 엔진이 인코딩/먹싱에 실패하거나 0바이트 파일을 만들면 호출한다. 엔진(백그라운드
+    // 스레드)과 UI 스레드가 함께 접근할 수 있어 read-modify-write 경합을 막으려 동기화.
+    @Synchronized
+    fun recordEncodeFailure(ctx: Context) {
+        val p = prefs(ctx)
+        p.edit()
+            .putInt(KEY_ENCODE_FAIL_COUNT, p.getInt(KEY_ENCODE_FAIL_COUNT, 0) + 1)
+            .putLong(KEY_ENCODE_FAIL_LAST, System.currentTimeMillis())
+            .apply()
+    }
+
+    fun getEncodeFailCount(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_ENCODE_FAIL_COUNT, 0)
+
+    fun getEncodeFailLast(ctx: Context): Long =
+        prefs(ctx).getLong(KEY_ENCODE_FAIL_LAST, 0L)
+
+    /** 사용자가 경고를 확인하면 호출(누적 초기화). */
+    @Synchronized
+    fun clearEncodeFailures(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(KEY_ENCODE_FAIL_COUNT)
+            .remove(KEY_ENCODE_FAIL_LAST)
+            .apply()
+    }
 
     // ---- 일별 배터리 소모 (기기 전체 기준 추정) ----
     //

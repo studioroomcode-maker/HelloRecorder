@@ -22,16 +22,23 @@ class CleanupWorker(
 
     override fun doWork(): Result {
         val ctx = applicationContext
-        val retentionMs = Prefs.getRetentionHours(ctx) * 60L * 60 * 1000
-        val cutoff = System.currentTimeMillis() - retentionMs
+        val retentionHours = Prefs.getRetentionHours(ctx)
+        val now = System.currentTimeMillis()
         val protectedSet = Prefs.getProtected(ctx)
 
         for (file in Storage.listAllFiles(ctx)) {
             val key = Storage.relativeKey(ctx, file)
-            if (file.lastModified() < cutoff && !protectedSet.contains(key)) {
-                file.delete()
+            if (RecordingLogic.isExpired(file.lastModified(), now, retentionHours, protectedSet.contains(key))) {
+                Storage.deleteRecording(ctx, file)   // 오디오+.lvl+전사+메타 일괄
             }
         }
+
+        // 빈(0바이트)·깨진 녹음 파일 정리 (인코딩 실패 잔해)
+        Storage.cleanupEmptyFiles(ctx)
+
+        // 어떤 삭제 경로(수동 삭제 등)도 놓친 짝 잃은 사이드카 정리
+        Storage.sweepOrphanProfiles(ctx)
+        TranscriptStore.sweepOrphans(ctx)
 
         // 빈 날짜 폴더 제거
         Storage.listDayDirs(ctx).forEach { dir ->

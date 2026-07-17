@@ -5,4 +5,9 @@
     <files-path name="recordings" path="recordings/" />
     <!-- 외부 앱 전용 저장소(getExternalFilesDir)/recordings — ‘외부(공유)’ 저장 위치 공유용 -->
     <external-files-path name="ext_recordings" path="recordings/" />
+    <!-- 기기 내부(filesDir)/crash_logs — 온디바이스 오류 로그 공유용 -->
+    <files-path name="crash_logs" path="crash_logs/" />
+    <!-- 공유 폴백용 캐시. SD카드(보조 외부 저장소)는 external-files-path 로 못 잡으므로,
+         그런 파일은 여기로 복사해 공유한다(Share.uriFor). -->
+    <cache-path name="share_cache" path="share/" />
 </paths>
