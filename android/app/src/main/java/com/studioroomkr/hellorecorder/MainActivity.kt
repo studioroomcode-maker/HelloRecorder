@@ -35,6 +35,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -64,23 +65,28 @@ class MainActivity : AppCompatActivity() {
     private var locationZonesContainer: LinearLayout? = null
     private var pendingLocationAction: (() -> Unit)? = null
 
-    private var searchQuery: String = ""
+    private var searchQuery: String
+        get() = vm.searchQuery
+        set(v) { vm.searchQuery = v }
     private var unlocked = false
     // 잠금 인증 다이얼로그가 떠 있는 동안 onResume 이 다시 불려도 중복 프롬프트를 막는다.
     private var authInProgress = false
     private var lastBattSampleTs = 0L
-    private val selectedKeys = HashSet<String>()
-    private val shownKeys = ArrayList<String>()
-    private val durationCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val selectedKeys get() = vm.selectedKeys
+    private val shownKeys get() = vm.shownKeys
+    // 데이터 접근은 ViewModel 의 리포지토리를 공유한다(같은 캐시를 쓰도록).
+    private val repo get() = vm.repo
     private var weekStripContainer: LinearLayout? = null
     private var weekAnchorMillis: Long = System.currentTimeMillis()
-    private var selectedDateKey: String? = null   // null = 전체
-    private var selectedCategory: String? = null  // null = 전체 카테고리
+    private var selectedDateKey: String?
+        get() = vm.selectedDateKey
+        set(v) { vm.selectedDateKey = v }
+    private var selectedCategory: String?
+        get() = vm.selectedCategory
+        set(v) { vm.selectedCategory = v }
     private var categoryChips: LinearLayout? = null
     private var transcriptHits: LinearLayout? = null   // 내용(전사) 검색 결과 블록
     private var sortButton: Button? = null
-    private val durationMsCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val tagCache = java.util.concurrent.ConcurrentHashMap<String, String>()   // 활동 태그(.lvl 집계)
     // 파일 길이(메타데이터) 비동기 로딩 — 메인스레드를 막지 않게 백그라운드에서 읽어 행을 갱신
     private val metaExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     // 목록을 다시 그릴 때마다 증가 — 비동기 콜백이 옛 목록의 뷰를 갱신하지 않게 가드
@@ -114,16 +120,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var filesRecycler: RecyclerView
     private lateinit var filesAdapter: FilesAdapter
     private lateinit var filesHeaderContent: LinearLayout      // 목록 위 헤더(검색·칩·전사결과 등)
-    private val fileItems = ArrayList<FileListItem>()          // 현재 표시 모델
-    private val collapsedDays = HashSet<String>()              // 접힌 날짜
-    private val initializedDays = HashSet<String>()            // 접힘 기본값을 이미 정한 날짜
-
-    private sealed class FileListItem {
-        object Header : FileListItem()
-        data class Day(val dayKey: String, val pretty: String, val keys: List<String>, val count: Int) : FileListItem()
-        data class Row(val file: File, val key: String) : FileListItem()
-        data class Empty(val text: String) : FileListItem()
-    }
+    // 목록 상태(검색·선택·필터·접힘·표시모델)는 ViewModel 에 산다 — 회전·recreate() 를 거쳐도 유지.
+    // 아래 접근자들은 기존 코드가 그대로 쓰도록 ViewModel 의 상태로 위임한다.
+    private val vm: FileListViewModel by viewModels()
+    private val fileItems get() = vm.fileItems
+    private val collapsedDays get() = vm.collapsedDays
 
     private val uiHandler = Handler(Looper.getMainLooper())
     // 검색 입력 디바운스 — 타이핑이 멈춘 뒤에만 목록을 다시 그린다.
@@ -1619,7 +1620,7 @@ class MainActivity : AppCompatActivity() {
         c.removeAllViews()
         val q = searchQuery
         if (q.length < 2) return   // 한 글자는 잡음 매칭이 너무 많음
-        val hits = try { TranscriptStore.search(this, q, 30) } catch (_: Exception) { emptyList() }
+        val hits = repo.searchTranscripts(q, 30)
         if (hits.isEmpty()) return
 
         fun fmtMs(ms: Long): String {
@@ -1681,74 +1682,12 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun ckOf(f: File): String = "${f.absolutePath}:${f.lastModified()}"
-
-    /** 파일 길이(ms). 한 번의 메타데이터 읽기로 ms·표시문자열 캐시를 함께 채운다(블로킹). */
-    private fun durationMs(f: File): Long {
-        val ck = ckOf(f)
-        durationMsCache[ck]?.let { return it }
-        // setDataSource 가 던지면(손상·삭제 파일) release() 가 건너뛰어져 네이티브 객체가 샌다.
-        // finally 로 반드시 해제한다.
-        val mmr = android.media.MediaMetadataRetriever()
-        val ms = try {
-            mmr.setDataSource(f.absolutePath)
-            mmr.extractMetadata(
-                android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
-            )?.toLongOrNull() ?: 0L
-        } catch (_: Exception) { 0L }
-        finally { try { mmr.release() } catch (_: Exception) {} }
-        durationMsCache[ck] = ms
-        durationCache[ck] = if (ms > 0) { val s = ms / 1000; "%d:%02d".format(s / 60, s % 60) } else "--:--"
-        return ms
-    }
-
-    /**
-     * .lvl 활동 프로필을 집계한 짧은 태그(예: "대화 약 3분", "대부분 무음"). 블로킹.
-     * 프로필 없음(구버전) 또는 소리는 있으나 음성 미분석(음성 모드 꺼짐)이면 "" (오해 방지).
-     */
-    private fun activityTag(f: File): String {
-        val ck = ckOf(f)
-        tagCache[ck]?.let { return it }
-        val prof = Storage.readActivityProfile(f)
-        val tag = if (prof == null || prof.voice.isEmpty()) {
-            ""
-        } else {
-            val n = prof.voice.size
-            val voiceCount = prof.voice.count { it }
-            val loudCount = prof.levels.count { it >= 0.12f }
-            when {
-                voiceCount > 0 -> {
-                    val durMs = durationMsCache[ck] ?: durationMs(f)
-                    val base = if (durMs > 0) durMs else n * 500L
-                    val speechSec = (base / 1000.0 * voiceCount / n).toLong().coerceAtLeast(1)
-                    if (speechSec >= 60) I18n.f("대화 약 %d분", speechSec / 60)
-                    else I18n.f("대화 약 %d초", speechSec)
-                }
-                loudCount.toFloat() / n < 0.05f -> I18n.t("대부분 무음")
-                else -> ""
-            }
-        }
-        tagCache[ck] = tag
-        return tag
-    }
-
-    private fun applySort(files: List<File>): List<File> {
-        val mode = if (Pro.isPro) Prefs.getSortMode(this) else Prefs.SORT_NEW
-        return when (mode) {
-            Prefs.SORT_OLD -> files.sortedBy { it.lastModified() }
-            Prefs.SORT_NAME -> files.sortedBy { it.name }
-            Prefs.SORT_SIZE -> files.sortedByDescending { it.length() }
-            Prefs.SORT_DUR -> files.sortedByDescending { durationMs(it) }
-            else -> files.sortedByDescending { it.lastModified() }
-        }
-    }
-
     // ── 카테고리(폴더 정리) ──
 
     private fun refreshCategoryChips() {
         val box = categoryChips ?: return
         box.removeAllViews()
-        val cats = Prefs.getCategories(this)
+        val cats = repo.categories()
         if (cats.isEmpty()) return   // 카테고리 없으면 칩 숨김
         fun chip(label: String, value: String?) {
             val selected = selectedCategory == value
@@ -1923,53 +1862,12 @@ class MainActivity : AppCompatActivity() {
         buildWeekStrip()   // 달력 점 갱신(헤더 내부)
         refreshTranscriptHits()   // 내용(전사) 검색 결과 갱신(헤더 내부)
 
-        fileItems.clear()
-        fileItems.add(FileListItem.Header)
-        shownKeys.clear()
         val cal = Calendar.getInstance()
         val todayKey = "%04d%02d%02d".format(
             cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH)
         )
-        var shown = 0
-        for (dayDir in Storage.listDayDirs(this)) {
-            val d = dayDir.name
-            if (selectedDateKey != null && d != selectedDateKey) continue
-            val raw = dayDir.listFiles()
-                ?.filter { it.isFile && it.name.endsWith(".m4a") }
-                ?.filter { matchesSearch(it, dayDir.name) }
-                ?.filter {
-                    selectedCategory == null ||
-                        Prefs.getCategory(this, Storage.relativeKey(this, it)) == selectedCategory
-                } ?: emptyList()
-            val files = applySort(raw)
-            if (files.isEmpty()) continue
-
-            val pretty = if (d.length == 8)
-                "${d.substring(0, 4)}.${d.substring(4, 6)}.${d.substring(6, 8)}" else d
-            val keys = files.map { Storage.relativeKey(this, it) }
-            shownKeys.addAll(keys)   // 접혀 있어도 선택 유지·전체선택 대상
-
-            // 접힘 기본값: (필터 없음) 오늘만 펼침 / (날짜 선택 시) 그 날 펼침. 이후엔 사용자 토글 유지.
-            if (initializedDays.add(d)) {
-                val defaultExpanded =
-                    (selectedDateKey != null && d == selectedDateKey) ||
-                        (selectedDateKey == null && d == todayKey)
-                if (!defaultExpanded) collapsedDays.add(d)
-            }
-
-            fileItems.add(FileListItem.Day(d, pretty, keys, files.size))
-            if (!collapsedDays.contains(d)) {
-                for (i in files.indices) fileItems.add(FileListItem.Row(files[i], keys[i]))
-            }
-            shown += files.size
-        }
-        selectedKeys.retainAll(shownKeys.toSet())
-        if (shown == 0) {
-            fileItems.add(FileListItem.Empty(
-                if (searchQuery.isEmpty()) I18n.t("아직 녹음된 파일이 없습니다.")
-                else I18n.t("검색 결과가 없습니다.")
-            ))
-        }
+        // 표시 모델 계산은 ViewModel 이 한다(순수 데이터 로직). 여기선 결과를 어댑터에 반영만.
+        vm.buildItems(todayKey, Pro.isPro)
         filesAdapter.notifyDataSetChanged()
     }
 
@@ -1996,7 +1894,7 @@ class MainActivity : AppCompatActivity() {
             text = (if (collapsed) "▸ " else "▾ ") + "${item.pretty}  (${item.count})"
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             setOnClickListener {
-                if (collapsed) collapsedDays.remove(d) else collapsedDays.add(d)
+                vm.toggleCollapse(d)
                 refreshFileList()
             }
         }
@@ -2095,7 +1993,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("%d개 파일을 삭제할까요?", files.size))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                for (f in files) Storage.deleteRecording(this, f)
+                for (f in files) repo.delete(f)
                 selectedKeys.clear()
                 refreshFileList()
                 Toast.makeText(this, I18n.f("%d개 삭제됨", files.size), Toast.LENGTH_SHORT).show()
@@ -2111,7 +2009,7 @@ class MainActivity : AppCompatActivity() {
         val candidates = Storage.listAllFiles(this).filter { f ->
             val key = Storage.relativeKey(this, f)
             if (Prefs.isProtected(this, key)) return@filter false
-            val d = durationMs(f)
+            val d = repo.durationMs(f)
             d in 1 until cutoffMs   // 0(=길이 못 읽음/녹음 중)은 건드리지 않음
         }
         if (candidates.isEmpty()) {
@@ -2123,7 +2021,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("기준보다 짧은 녹음 %d개를 삭제할까요? (보관 파일 제외)", candidates.size))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                for (f in candidates) Storage.deleteRecording(this, f)
+                for (f in candidates) repo.delete(f)
                 refreshFileList()
                 Toast.makeText(this, I18n.f("%d개 삭제됨", candidates.size), Toast.LENGTH_SHORT).show()
             }
@@ -2140,24 +2038,6 @@ class MainActivity : AppCompatActivity() {
         for (f in files) Prefs.setProtected(this, Storage.relativeKey(this, f), on)
         refreshFileList()
         Toast.makeText(this, if (on) I18n.f("%d개 보관됨", files.size) else I18n.f("%d개 보관 해제됨", files.size), Toast.LENGTH_SHORT).show()
-    }
-
-    /** 표시용 길이 문자열(블로킹). durationMs 가 두 캐시를 모두 채운다. */
-    private fun fmtDuration(f: File): String {
-        durationCache[ckOf(f)]?.let { return it }
-        durationMs(f)
-        return durationCache[ckOf(f)] ?: "--:--"
-    }
-
-    private fun matchesSearch(f: File, dayName: String): Boolean {
-        if (searchQuery.isEmpty()) return true
-        val key = Storage.relativeKey(this, f)
-        val label = Prefs.getLabel(this, key)
-        val q = searchQuery.lowercase()
-        return f.name.lowercase().contains(q) ||
-                label.lowercase().contains(q) ||
-                dayName.contains(q) ||
-                fmtDuration(f).contains(q)   // 길이(예: "1:23")로도 검색
     }
 
     private fun buildFileRow(f: File): View {
@@ -2222,19 +2102,18 @@ class MainActivity : AppCompatActivity() {
             val bmLine = if (bm > 0) "  ★$bm" else ""
             val cat = Prefs.getCategory(this@MainActivity, key)
             val catTag = if (cat.isNotEmpty()) "  [$cat]" else ""
-            val tag = tagCache[ckOf(f)] ?: ""
+            val tag = repo.cachedTag(f) ?: ""
             val tagLine = if (tag.isNotEmpty()) "  · $tag" else ""
             info.text = "${f.name}\n$durClock · ${sizeKb}KB · $time$tagLine$bmLine$catTag$labelLine"
         }
-        val ck = ckOf(f)
-        val cachedDur = durationCache[ck]
+        val cachedDur = repo.cachedDurationText(f)
         composeInfo(cachedDur ?: "…")
-        if ((cachedDur == null || tagCache[ck] == null) && !metaExecutor.isShutdown) {
+        if ((cachedDur == null || repo.cachedTag(f) == null) && !metaExecutor.isShutdown) {
             val gen = listGeneration
             metaExecutor.execute {
-                durationMs(f)     // 백그라운드에서 메타데이터 읽기(두 캐시 채움)
-                activityTag(f)    // .lvl 집계 태그도 함께 채움
-                val clock = durationCache[ck] ?: "--:--"
+                repo.durationMs(f)     // 백그라운드에서 메타데이터 읽기(두 캐시 채움)
+                repo.activityTag(f)    // .lvl 집계 태그도 함께 채움
+                val clock = repo.cachedDurationText(f) ?: "--:--"
                 uiHandler.post { if (gen == listGeneration) composeInfo(clock) }
             }
         }
@@ -2269,20 +2148,16 @@ class MainActivity : AppCompatActivity() {
 
     // ── 목록 인라인 재생 ──
 
-    /** 재생 중인 행의 어댑터 위치. 없거나 스크롤 밖이면 -1/null. */
-    private fun playingRowPosition(): Int {
-        val key = playingKey ?: return -1
-        return fileItems.indexOfFirst { it is FileListItem.Row && it.key == key }
-    }
     private fun playingRowHolder(): RecyclerView.ViewHolder? {
         if (!::filesRecycler.isInitialized) return null
-        val pos = playingRowPosition()
+        val key = playingKey ?: return null
+        val pos = vm.rowPositionForKey(key)
         return if (pos >= 0) filesRecycler.findViewHolderForAdapterPosition(pos) else null
     }
     /** 특정 키의 행을 다시 바인딩(재생 상태 변화 반영). */
     private fun notifyRowChanged(key: String) {
         if (!::filesAdapter.isInitialized) return
-        val pos = fileItems.indexOfFirst { it is FileListItem.Row && it.key == key }
+        val pos = vm.rowPositionForKey(key)
         if (pos >= 0) filesAdapter.notifyItemChanged(pos)
     }
 
@@ -2343,7 +2218,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("%s 파일을 삭제할까요?", f.name))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                Storage.deleteRecording(this, f)
+                repo.delete(f)
                 refreshFileList()
             }
             .setNegativeButton(I18n.t("취소"), null)

@@ -104,6 +104,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")  // 파일 목록 뷰 재활용
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")  // 목록 상태 ViewModel
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("org.osmdroid:osmdroid-android:6.1.18")
