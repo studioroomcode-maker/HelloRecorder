@@ -63,6 +63,8 @@ class MainActivity : AppCompatActivity() {
 
     private var searchQuery: String = ""
     private var unlocked = false
+    // 잠금 인증 다이얼로그가 떠 있는 동안 onResume 이 다시 불려도 중복 프롬프트를 막는다.
+    private var authInProgress = false
     private var lastBattSampleTs = 0L
     private val selectedKeys = HashSet<String>()
     private val shownKeys = ArrayList<String>()
@@ -206,8 +208,9 @@ class MainActivity : AppCompatActivity() {
         TranscribeWorker.schedule(this)   // 자동 전사(충전 중 배치) — 설정 꺼짐이면 워커가 즉시 통과
 
         if (Prefs.isAppLockEnabled(this)) {
+            // 잠금 상태로 시작. 실제 인증은 onResume 이 한다 — 백그라운드 복귀 재잠금과
+            // 같은 경로를 타게 해, 최초 진입과 복귀가 어긋나지 않는다.
             contentRoot.visibility = View.GONE
-            promptUnlock()
         } else {
             unlocked = true
         }
@@ -2254,6 +2257,15 @@ class MainActivity : AppCompatActivity() {
 
     // ───────────────────────── 앱 잠금 ─────────────────────────
 
+    /** 인증 통과(또는 잠글 수단 없음). 내용을 드러내고, onResume 이 못 돌린 갱신을 시작한다. */
+    private fun onUnlocked() {
+        unlocked = true
+        if (::contentRoot.isInitialized) contentRoot.visibility = View.VISIBLE
+        // onResume 에서 잠금 때문에 건너뛴 레벨틱·배터리 갱신을 여기서 킨다.
+        uiHandler.post(levelTick)
+        refreshBattery()
+    }
+
     private fun promptUnlock() {
         val canAuth = BiometricManager.from(this)
             .canAuthenticate(
@@ -2261,18 +2273,20 @@ class MainActivity : AppCompatActivity() {
                         BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
         if (canAuth != BiometricManager.BIOMETRIC_SUCCESS) {
-            unlocked = true
-            contentRoot.visibility = View.VISIBLE
+            // 생체·기기 자격증명이 아예 없으면 잠글 수단이 없다 → 그냥 연다.
+            onUnlocked()
             return
         }
+        authInProgress = true
         val prompt = BiometricPrompt(
             this, ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    unlocked = true
-                    contentRoot.visibility = View.VISIBLE
+                    authInProgress = false
+                    onUnlocked()
                 }
                 override fun onAuthenticationError(code: Int, msg: CharSequence) {
+                    authInProgress = false
                     finish()
                 }
             })
@@ -2292,6 +2306,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // 잠금이 켜져 있고 아직 안 풀렸으면(최초 진입·백그라운드 복귀) 인증을 요구한다.
+        // 인증 전에는 아래 레벨틱·배터리·Pro 갱신을 돌리지 않는다(내용 노출 방지).
+        if (Prefs.isAppLockEnabled(this) && !unlocked) {
+            if (!authInProgress) promptUnlock()
+            return
+        }
         if (unlocked) {
             uiHandler.post(levelTick)
             refreshBattery()
@@ -2332,6 +2352,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         stopInlinePlay()
+        // 백그라운드로 나가면 다시 잠근다. 예전엔 onCreate 에서만 잠가, 앱을 홈으로 보냈다가
+        // 되돌아오면(액티비티가 살아 있는 한) 재인증 없이 목록이 그대로 보였다.
+        if (Prefs.isAppLockEnabled(this) && !authInProgress) {
+            unlocked = false
+            if (::contentRoot.isInitialized) contentRoot.visibility = View.GONE
+        }
     }
 
     override fun onDestroy() {
