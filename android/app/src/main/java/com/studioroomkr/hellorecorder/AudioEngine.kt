@@ -964,14 +964,25 @@ class AudioEngine(
         }
 
         private fun feed(data: ByteArray) {
-            val inIndex = codec.dequeueInputBuffer(10_000)
-            if (inIndex >= 0) {
-                val inBuf: ByteBuffer = codec.getInputBuffer(inIndex)!!
-                inBuf.clear()
-                inBuf.put(data)
-                codec.queueInputBuffer(inIndex, 0, data.size, ptsUs, 0)
-                // 16bit mono 기준 샘플당 시간 누적
-                ptsUs += (data.size.toLong() / 2) * 1_000_000L / SAMPLE_RATE
+            // 입력 버퍼를 얻을 때까지 재시도한다. 예전엔 10ms 안에 못 얻으면 이 PCM 청크를
+            // 조용히 버려, 고부하 기기에서 녹음 일부가 소리 없이 누락됐다. 입력 버퍼가 다 찬
+            // 건 대개 출력이 밀렸기 때문이라, drain 으로 출력을 빼내면 버퍼가 풀린다.
+            // 반복은 넉넉히 상한(≈2초)만 둔다 — 정상 흐름에선 한두 번에 끝나고, 코덱이 완전히
+            // 멈춘 극단적 경우에만 상한에 걸려(그때만 옛 동작처럼 드롭) 녹음 스레드 무한정지를 막는다.
+            var attempts = 0
+            while (true) {
+                val inIndex = codec.dequeueInputBuffer(10_000)
+                if (inIndex >= 0) {
+                    val inBuf: ByteBuffer = codec.getInputBuffer(inIndex)!!
+                    inBuf.clear()
+                    inBuf.put(data)
+                    codec.queueInputBuffer(inIndex, 0, data.size, ptsUs, 0)
+                    // 16bit mono 기준 샘플당 시간 누적
+                    ptsUs += (data.size.toLong() / 2) * 1_000_000L / SAMPLE_RATE
+                    return
+                }
+                if (++attempts >= 200) return   // 코덱 정지 등 극단 상황의 안전 탈출
+                drain(false)                     // 출력을 빼내 입력 버퍼를 돌려받고 재시도
             }
         }
 
