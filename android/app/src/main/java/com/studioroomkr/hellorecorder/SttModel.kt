@@ -4,6 +4,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * STT 모델(한국어 Zipformer int8, 총 ~133MB) 인앱 다운로드 관리.
@@ -19,11 +20,22 @@ object SttModel {
 
     private const val BASE =
         "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/main/"
+    /**
+     * 받을 파일 + 무결성 기준(크기·SHA-256). DownloadManager 의 "성공"은 HTTP 전송 완료를
+     * 뜻할 뿐, 내용이 올바른지는 보장하지 않는다(프록시 에러페이지·잘린 파일·저장소 교체본이
+     * 그대로 통과 가능). 정식 폴더로 옮기기 전에 이 기준으로 검증한다.
+     * 값은 허깅페이스 k2-fsa 저장소 실측(LFS oid = 파일 SHA-256, tokens.txt 는 직접 계산).
+     */
+    private data class ModelFile(val name: String, val size: Long, val sha256: String)
     private val FILES = listOf(
-        "encoder-epoch-99-avg-1.int8.onnx",   // ~127MB
-        "decoder-epoch-99-avg-1.int8.onnx",   // ~2.8MB
-        "joiner-epoch-99-avg-1.int8.onnx",    // ~2.6MB
-        "tokens.txt",
+        ModelFile("encoder-epoch-99-avg-1.int8.onnx", 126_968_852,
+            "8d0b1aa24fbedd4e3948564ab7facd151b8ce9b0c48fc987c541de2de3af5697"),
+        ModelFile("decoder-epoch-99-avg-1.int8.onnx", 2_844_692,
+            "68ea197936aabd249f38b53a87c775422bca64428ad4427d0e6e8092593e71fb"),
+        ModelFile("joiner-epoch-99-avg-1.int8.onnx", 2_581_421,
+            "128b80a66a1f718488af8560f9d15895109b99ff3e573f0a0130e03774ef1ced"),
+        ModelFile("tokens.txt", 60_246,
+            "016bdf0965029263b7ad01b742366ee542ef0bef38261510e8176ff6f2e9e668"),
     )
     const val TOTAL_MB = 133
     private const val TMP_SUBDIR = "stt-model-tmp"
@@ -42,7 +54,8 @@ object SttModel {
         cleanupTmp(ctx)
         val ids = ArrayList<Long>(FILES.size)
         try {
-            for (name in FILES) {
+            for (mf in FILES) {
+                val name = mf.name
                 val req = DownloadManager.Request(Uri.parse(BASE + name))
                     .setTitle(I18n.t("음성 인식 모델 다운로드"))
                     .setDescription(name)
@@ -112,15 +125,25 @@ object SttModel {
         }
         if (success < ids.size) return false   // 아직 진행 중
 
-        // 전부 성공 → tmp 에서 정식 폴더로 이동(같은 볼륨이라 rename 원자적)
         val tmp = File(ctx.getExternalFilesDir(null), TMP_SUBDIR)
+
+        // 이동 전에 무결성 검증. 하나라도 크기·해시가 어긋나면 손상·변조로 보고 전부 폐기해
+        // 다음에 처음부터 다시 받게 한다. 반쪽·손상 모델이 정식 폴더로 승격되는 걸 막는다.
+        for (mf in FILES) {
+            val src = File(tmp, mf.name)
+            if (!src.exists() || src.length() != mf.size || sha256(src) != mf.sha256) {
+                cancel(ctx)   // ids 비우고 tmp 정리
+                return false
+            }
+        }
+
+        // 검증 통과 → tmp 에서 정식 폴더로 이동(같은 볼륨이라 rename 원자적)
         val dst = Transcriber.modelDir(ctx).apply { mkdirs() }
         var ok = true
-        for (name in FILES) {
-            val src = File(tmp, name)
-            val out = File(dst, name)
+        for (mf in FILES) {
+            val out = File(dst, mf.name)
             if (out.exists()) out.delete()
-            if (!src.exists() || !src.renameTo(out)) { ok = false; break }
+            if (!File(tmp, mf.name).renameTo(out)) { ok = false; break }
         }
         Prefs.setSttDownloadIds(ctx, emptyList())
         cleanupTmp(ctx)
@@ -150,5 +173,19 @@ object SttModel {
         try {
             File(ctx.getExternalFilesDir(null), TMP_SUBDIR).listFiles()?.forEach { it.delete() }
         } catch (_: Exception) {}
+    }
+
+    /** 파일 SHA-256(소문자 hex). 스트리밍으로 읽어 127MB 도 메모리에 통째로 안 올린다. */
+    internal fun sha256(f: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { ins ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = ins.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 }
