@@ -343,6 +343,7 @@ object I18n {
 
         // ── 공유 ──
         "녹음 파일 공유" to "Share recording",
+        "파일을 공유할 수 없습니다" to "Can't share this file",
         "백업 내보내기 (%d개)" to "Export backup (%d)",
 
         // ── Pro ──
