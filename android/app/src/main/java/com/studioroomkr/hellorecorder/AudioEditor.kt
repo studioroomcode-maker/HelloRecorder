@@ -65,7 +65,10 @@ object AudioEditor {
                 info.offset = 0
                 info.size = size
                 info.presentationTimeUs = sampleTimeUs
-                info.flags = extractor.sampleFlags
+                // extractor 의 SAMPLE_FLAG_* 와 muxer 가 기대하는 BUFFER_FLAG_* 는 서로 다른
+                // 상수 체계다. 지금은 값이 우연히 겹쳐 무해했지만, sync 여부만 명시적으로 옮긴다.
+                info.flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+                    MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                 muxer.writeSampleData(dstTrack, buffer, info)
                 extractor.advance()
             }
