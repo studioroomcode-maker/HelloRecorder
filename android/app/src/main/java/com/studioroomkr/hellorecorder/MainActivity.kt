@@ -553,6 +553,33 @@ class MainActivity : AppCompatActivity() {
         })
         c.addView(btnRow)
         c.addView(Theme.hint(this, "녹음 내용·위치 좌표는 포함되지 않습니다. 기기·설정·개수만 담겨, 문제 신고 시 붙여 넣기 좋습니다."))
+
+        // ── 측정 로깅(실측용) ──
+        c.addView(Theme.divider(this).apply {
+            (layoutParams as? LinearLayout.LayoutParams)?.setMargins(0, dp(12), 0, dp(8))
+        })
+        c.addView(Theme.subHeader(this, "측정 로깅 (기기 실측)"))
+        c.addView(Theme.checkBox(this, "녹음 세션 측정 기록").apply {
+            isChecked = Prefs.isMeasurementEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> Prefs.setMeasurementEnabled(this@MainActivity, on) }
+        })
+        c.addView(Theme.hint(this, "켜면 녹음 세션마다 배터리 감소·구간 수·누락(드롭) 청크·VAD 수락/거부를 CSV 로 기기 안에 기록합니다. 여러 기기에서 돌려 배터리·누락률·VAD 실측표를 만들 때 씁니다. 평소엔 꺼 두세요."))
+        val measRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        measRow.addView(Theme.smallButton(this, "측정 CSV 내보내기") {
+            if (MeasurementLog.hasData(this)) Share.shareLogFiles(this, listOf(MeasurementLog.csvFile(this)))
+            else Toast.makeText(this, I18n.t("아직 측정 기록이 없습니다"), Toast.LENGTH_SHORT).show()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(0, dp(4), dp(3), 0) }
+        })
+        measRow.addView(Theme.smallButton(this, "측정 기록 지우기") {
+            MeasurementLog.clear(this)
+            Toast.makeText(this, I18n.t("측정 기록을 지웠습니다"), Toast.LENGTH_SHORT).show()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(dp(3), dp(4), 0, 0) }
+        })
+        c.addView(measRow)
     }
 
     private fun buildAppInfoSection(parent: LinearLayout) {

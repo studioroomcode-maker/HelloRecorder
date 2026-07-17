@@ -298,6 +298,14 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_CONSENT, accepted).apply()
     }
 
+    // ---- 측정 로깅(기기 실측용, 기본 꺼짐) ----
+    fun isMeasurementEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean("measurement_enabled", false)
+
+    fun setMeasurementEnabled(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean("measurement_enabled", on).apply()
+    }
+
     // ---- 앱 잠금 ----
     fun isAppLockEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_APP_LOCK, false)

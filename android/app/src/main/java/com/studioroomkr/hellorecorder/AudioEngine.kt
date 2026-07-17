@@ -100,6 +100,12 @@ class AudioEngine(
         Prefs.recordBatterySample(context, level)
     }
 
+    /** 현재 배터리 잔량 %(모르면 -1) — 측정 로거용. */
+    private fun batteryLevel(): Int {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return -1
+        return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+
     private fun sampleLocation() {
         // 기능이 꺼져 있거나 구역이 하나도 없으면 게이팅할 게 없다 → 그냥 녹음.
         if (!Prefs.isLocationEnabled(context) || Prefs.getZones(context).isEmpty()) {
@@ -163,6 +169,7 @@ class AudioEngine(
         running = true
         // 첫 판정 전까지는 아직 아무것도 모른다 — 켜 있는 동안만 유효한 값이라 여기서 초기화한다.
         locState = LocState.OFF
+        MeasurementLog.onSessionStart(context, batteryLevel())
         thread = Thread { loop() }.apply { start() }
     }
 
@@ -172,6 +179,7 @@ class AudioEngine(
         thread = null
         releaseWakeLock()
         locState = LocState.OFF
+        MeasurementLog.onSessionEnd(context, batteryLevel())
     }
 
     // 목소리 강조용 오디오 효과 (NS: 정상 소음 억제 — GTCRN 로드 실패 시 폴백으로만 연결)
@@ -383,6 +391,7 @@ class AudioEngine(
                         if (ok && Pro.isPro && Prefs.isSileroEnabled(context)) {
                             ok = voiceVad.isSpeechSilero(pcm, read) ?: true
                         }
+                        MeasurementLog.onVad(ok)   // 음성 대역 에너지가 있을 때의 VAD 판정 기록
                         ok
                     }
                 } else {
@@ -405,7 +414,7 @@ class AudioEngine(
                     lastSoundTime = now
                     // 소리 시작. Capture 가 '짧은 녹음 자동 삭제' 설정을 보고
                     // 임계값 넘기 전까진 메모리에만 버퍼링(인코딩·WakeLock·파일 생성 보류)한다.
-                    if (capture == null) capture = Capture(hk)
+                    if (capture == null) { capture = Capture(hk); MeasurementLog.onSegmentStart() }
                     capture.feed(pcm, read, detect, voiceMode && hasSound)
                 } else if (capture != null) {
                     // 임계값 아래(무음 판정). 캡처가 진행 중이면:
@@ -969,6 +978,7 @@ class AudioEngine(
             // 건 대개 출력이 밀렸기 때문이라, drain 으로 출력을 빼내면 버퍼가 풀린다.
             // 반복은 넉넉히 상한(≈2초)만 둔다 — 정상 흐름에선 한두 번에 끝나고, 코덱이 완전히
             // 멈춘 극단적 경우에만 상한에 걸려(그때만 옛 동작처럼 드롭) 녹음 스레드 무한정지를 막는다.
+            MeasurementLog.onChunkFed()
             var attempts = 0
             while (true) {
                 val inIndex = codec.dequeueInputBuffer(10_000)
@@ -981,7 +991,7 @@ class AudioEngine(
                     ptsUs += (data.size.toLong() / 2) * 1_000_000L / SAMPLE_RATE
                     return
                 }
-                if (++attempts >= 200) return   // 코덱 정지 등 극단 상황의 안전 탈출
+                if (++attempts >= 200) { MeasurementLog.onChunkDropped(); return }   // 코덱 정지 등 극단 상황의 안전 탈출(누락)
                 drain(false)                     // 출력을 빼내 입력 버퍼를 돌려받고 재시도
             }
         }

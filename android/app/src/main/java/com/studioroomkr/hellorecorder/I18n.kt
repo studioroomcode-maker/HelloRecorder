@@ -57,6 +57,14 @@ object I18n {
             "⚠ %d recent recordings failed to save. This may be a device-compatibility issue — try disabling battery optimization in the Reliability settings.",
 
         // ── 섹션 제목 ──
+        "측정 로깅 (기기 실측)" to "Measurement logging (device metrics)",
+        "녹음 세션 측정 기록" to "Log recording-session metrics",
+        "켜면 녹음 세션마다 배터리 감소·구간 수·누락(드롭) 청크·VAD 수락/거부를 CSV 로 기기 안에 기록합니다. 여러 기기에서 돌려 배터리·누락률·VAD 실측표를 만들 때 씁니다. 평소엔 꺼 두세요." to
+            "When on, each recording session logs battery drain, segment count, dropped (missed) chunks, and VAD accept/reject to a local CSV. Use it to build battery / miss-rate / VAD tables across devices. Leave off in normal use.",
+        "측정 CSV 내보내기" to "Export metrics CSV",
+        "측정 기록 지우기" to "Clear metrics",
+        "아직 측정 기록이 없습니다" to "No metrics recorded yet",
+        "측정 기록을 지웠습니다" to "Metrics cleared",
         "진단 (상태 요약)" to "Diagnostics (status summary)",
         "복사" to "Copy",
         "복사했습니다" to "Copied",
