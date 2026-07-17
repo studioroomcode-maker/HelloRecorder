@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import java.security.MessageDigest
 
 plugins {
     alias(libs.plugins.android.application)
@@ -11,6 +12,21 @@ plugins {
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
+}
+
+// ---- sherpa-onnx AAR 좌표 ----
+// 저장소는 settings.gradle.kts 의 ivy(GitHub 릴리스). group 은 Maven 좌표가 아니라
+// 그 저장소를 겨냥한 이름이다(자산 경로는 module·revision·ext 로만 만들어진다).
+// 해시는 v1.13.3 공식 자산 실측값(57,044,841 bytes) — 자산이 바뀌면 빌드가 서도록 고정한다.
+val SHERPA_GROUP = "com.k2fsa"
+val SHERPA_MODULE = "sherpa-onnx"
+val SHERPA_VERSION = "1.13.3"
+val SHERPA_SHA256 = "243ad797a3b6e75ebbeaf7a2ab4aec0777e7d71b730685abb762a120940b07b6"
+
+// 체크섬 검증용 해석 전용 configuration.
+val sherpaAar: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
 }
 
 android {
@@ -99,9 +115,49 @@ dependencies {
     // (S25U: RTF 0.035, 근접 CER≈0%). AAR 이 ABI당 ~14MB 라 릴리스 크기가 늘지만
     // AAB 분할 전달로 기기당 1개 ABI 만 내려간다. 모델(~127MB)은 번들하지 않고 별도 다운로드.
     //
-    // group 을 반드시 채워야 한다. 빈 문자열이면 릴리스 빌드의 lintVital 이
-    // GradleDetector 에서 group 을 파일 경로로 변환하다 InvalidPathException 으로 죽어
-    // `./gradlew :app:bundleRelease` 자체가 실패한다. flatDir 은 group 을 무시하고
-    // 이름·버전·확장자로만 찾으므로, 아무 이름이나 채워도 해석 결과는 같다.
-    implementation(group = "sherpa", name = "sherpa-onnx-1.13.3", ext = "aar")
+    // settings.gradle.kts 의 ivy 저장소(GitHub 릴리스)에서 받는다. @aar 로 확장자를 못박아야
+    // 메타데이터 없는 단일 자산으로 해석된다.
+    implementation("$SHERPA_GROUP:$SHERPA_MODULE:$SHERPA_VERSION@aar")
+
+    // 위 implementation 과 같은 자산을 가리키는 해석 전용 사본 — verifySherpaAar 가
+    // 체크섬을 확인할 파일을 얻기 위한 것이다(패키징에는 영향 없음).
+    sherpaAar("$SHERPA_GROUP:$SHERPA_MODULE:$SHERPA_VERSION@aar")
 }
+
+abstract class VerifyChecksumTask : DefaultTask() {
+    @get:InputFiles abstract val artifact: ConfigurableFileCollection
+    @get:Input abstract val sha256: Property<String>
+
+    @TaskAction
+    fun verify() {
+        val file = artifact.singleFile
+        val expected = sha256.get().lowercase()
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { ins ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = ins.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        val actual = md.digest().joinToString("") { "%02x".format(it) }
+        if (actual != expected) {
+            throw GradleException(
+                "sherpa-onnx AAR 체크섬 불일치 — 릴리스 자산이 바뀌었거나 받다가 깨졌다.\n" +
+                    "  파일: ${file.path}\n  기대: $expected\n  실제: $actual\n" +
+                    "자산이 정당하게 갱신된 것이라면 내용을 확인한 뒤 SHERPA_SHA256 을 갱신한다."
+            )
+        }
+    }
+}
+
+// 받아온 AAR 이 실측으로 검증했던 그 파일이 맞는지 확인한다. GitHub 릴리스 자산은 태그가
+// 같아도 교체될 수 있어 버전 고정만으로는 재현성이 보장되지 않는다.
+val verifySherpaAar = tasks.register<VerifyChecksumTask>("verifySherpaAar") {
+    description = "받아온 sherpa-onnx AAR 의 SHA-256 을 고정값과 대조"
+    artifact.from(sherpaAar)
+    sha256.set(SHERPA_SHA256)
+}
+
+tasks.named("preBuild") { dependsOn(verifySherpaAar) }

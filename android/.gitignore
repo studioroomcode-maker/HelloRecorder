@@ -14,7 +14,6 @@
 .cxx
 local.properties
 
-# STT 스파이크용 대용량 AAR(57MB) — 커밋하지 않음. 받기:
-#   curl -sL -o app/libs/sherpa-onnx-1.13.3.aar \
-#     https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.3/sherpa-onnx-1.13.3.aar
+# sherpa-onnx AAR 은 더 이상 app/libs 에 두지 않는다 — settings.gradle.kts 의 ivy 저장소가
+# GitHub 릴리스에서 받고 verifySherpaAar 가 SHA-256 을 검증한다. 예전 로컬 사본만 무시.
 app/libs/*.aar
