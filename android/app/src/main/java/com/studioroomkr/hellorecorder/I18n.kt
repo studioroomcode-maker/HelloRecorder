@@ -193,6 +193,15 @@ object I18n {
         "‘외부(공유)’로 두면 파일 관리자/USB로 녹음 파일에 바로 접근할 수 있습니다(앱 삭제 시 함께 삭제). 위치를 바꿔도 기존 파일은 자동 이동되지 않습니다." to
             "'External (shared)' lets you access recordings via file manager/USB (deleted with the app). Changing location does not move existing files.",
         "저장 위치 변경됨 (기존 파일은 이동되지 않음)" to "Save location changed (existing files not moved)",
+        "저장 위치 변경" to "Change save location",
+        "기존 녹음 파일을 새 위치로 옮깁니다. 파일이 많으면 시간이 걸릴 수 있어요. 계속할까요?" to
+            "Existing recordings will be moved to the new location. This may take a while if there are many files. Continue?",
+        "이동" to "Move",
+        "파일을 옮기는 중…" to "Moving files…",
+        "저장 위치를 변경했습니다" to "Save location changed",
+        "%d개 파일을 옮겼습니다" to "Moved %d files",
+        "공간이 부족합니다(필요 %dMB)" to "Not enough space (need %dMB)",
+        "이동 실패 — 파일은 그대로 있습니다" to "Move failed — files are left in place",
         "자동 삭제 보관 기간: %s" to "Auto-delete after: %s",
         "이 기간이 지난 파일은 자동 삭제됩니다(보호 파일 제외)." to
             "Files older than this are auto-deleted (except kept files).",

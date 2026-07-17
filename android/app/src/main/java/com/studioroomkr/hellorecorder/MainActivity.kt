@@ -1199,6 +1199,39 @@ class MainActivity : AppCompatActivity() {
 
     // ───────────────────────── 섹션: 저장공간 ─────────────────────────
 
+    @Volatile private var moveInProgress = false
+
+    /** 저장 위치 이동을 백그라운드에서 실행하고 결과를 알린다. 메인스레드 파일 I/O 금지. */
+    private fun doMoveStorage(targetLoc: Int, onDone: () -> Unit) {
+        if (moveInProgress) return
+        moveInProgress = true
+        Toast.makeText(this, I18n.t("파일을 옮기는 중…"), Toast.LENGTH_SHORT).show()
+        metaExecutor.execute {
+            val result = try {
+                Storage.moveStorageTo(this, targetLoc)
+            } catch (e: Exception) {
+                Storage.MoveResult.Failed(e.message ?: "오류")
+            }
+            uiHandler.post {
+                moveInProgress = false
+                if (isFinishing || isDestroyed) return@post
+                val msg = when (result) {
+                    is Storage.MoveResult.Moved ->
+                        if (result.count == 0) I18n.t("저장 위치를 변경했습니다")
+                        else I18n.f("%d개 파일을 옮겼습니다", result.count)
+                    is Storage.MoveResult.AlreadyThere -> I18n.t("저장 위치를 변경했습니다")
+                    is Storage.MoveResult.NotEnoughSpace ->
+                        I18n.f("공간이 부족합니다(필요 %dMB)", result.need / (1024 * 1024))
+                    is Storage.MoveResult.Failed ->
+                        I18n.t("이동 실패 — 파일은 그대로 있습니다") + ": " + result.reason
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                onDone()
+                refreshFileList()
+            }
+        }
+    }
+
     private fun buildStorageSection(parent: LinearLayout) {
         val c = Theme.section(this, parent, "저장공간", expanded = false)
 
@@ -1217,10 +1250,14 @@ class MainActivity : AppCompatActivity() {
         c.addView(locLabel)
         val locRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun changeLoc(loc: Int) {
-            Prefs.setStorageLocation(this, loc)
-            refreshLoc()
-            refreshFileList()
-            Toast.makeText(this, I18n.t("저장 위치 변경됨 (기존 파일은 이동되지 않음)"), Toast.LENGTH_SHORT).show()
+            if (Prefs.getStorageLocation(this) == loc) return
+            // 기존 파일을 새 위치로 옮길지 확인. 이동은 all-or-nothing(실패 시 원본 보존).
+            AlertDialog.Builder(this)
+                .setTitle(I18n.t("저장 위치 변경"))
+                .setMessage(I18n.t("기존 녹음 파일을 새 위치로 옮깁니다. 파일이 많으면 시간이 걸릴 수 있어요. 계속할까요?"))
+                .setPositiveButton(I18n.t("이동")) { _, _ -> doMoveStorage(loc, ::refreshLoc) }
+                .setNegativeButton(I18n.t("취소"), null)
+                .show()
         }
         locRow.addView(Theme.smallButton(this, "내부") { changeLoc(Prefs.STORAGE_INTERNAL) })
         locRow.addView(Theme.smallButton(this, "외부(공유)") { changeLoc(Prefs.STORAGE_EXTERNAL) })
@@ -1230,7 +1267,7 @@ class MainActivity : AppCompatActivity() {
         c.addView(locRow)
         c.addView(pathLabel)
         refreshLoc()
-        c.addView(Theme.hint(this, "‘외부(공유)’로 두면 파일 관리자/USB로 녹음 파일에 바로 접근할 수 있습니다(앱 삭제 시 함께 삭제). 위치를 바꿔도 기존 파일은 자동 이동되지 않습니다."))
+        c.addView(Theme.hint(this, "‘외부(공유)’로 두면 파일 관리자/USB로 녹음 파일에 바로 접근할 수 있습니다(앱 삭제 시 함께 삭제). 위치를 바꾸면 기존 파일도 새 위치로 옮겨집니다."))
 
         c.addView(Theme.divider(this).apply {
             (layoutParams as? LinearLayout.LayoutParams)?.setMargins(0, dp(12), 0, dp(8))

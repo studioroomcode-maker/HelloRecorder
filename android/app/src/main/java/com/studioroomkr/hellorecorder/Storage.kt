@@ -22,8 +22,8 @@ import java.util.Locale
  */
 object Storage {
 
-    /** 설정된 저장 위치의 베이스 디렉터리. 외부/SD 가 없으면 내부로 폴백. */
-    private fun baseDir(ctx: Context): File = when (Prefs.getStorageLocation(ctx)) {
+    /** 주어진 저장 위치의 베이스 디렉터리. 외부/SD 가 없으면 내부로 폴백. */
+    private fun baseDirFor(ctx: Context, location: Int): File = when (location) {
         Prefs.STORAGE_EXTERNAL -> ctx.getExternalFilesDir(null) ?: ctx.filesDir
         Prefs.STORAGE_SD -> {
             val dirs = ctx.getExternalFilesDirs(null).filterNotNull()
@@ -32,8 +32,11 @@ object Storage {
         else -> ctx.filesDir
     }
 
-    private fun rootDir(ctx: Context): File =
-        File(baseDir(ctx), "recordings").apply { mkdirs() }
+    /** 주어진 저장 위치의 recordings 루트(없으면 생성). */
+    private fun rootDirFor(ctx: Context, location: Int): File =
+        File(baseDirFor(ctx, location), "recordings").apply { mkdirs() }
+
+    private fun rootDir(ctx: Context): File = rootDirFor(ctx, Prefs.getStorageLocation(ctx))
 
     /** 현재 저장 위치의 실제 경로(표시용). */
     fun currentRootPath(ctx: Context): String = rootDir(ctx).absolutePath
@@ -210,5 +213,86 @@ object Storage {
             if (freeBytes(ctx) >= minFreeBytes) return true
         }
         return freeBytes(ctx) >= minFreeBytes
+    }
+
+    // ── 저장 위치 이동 ──
+
+    sealed class MoveResult {
+        object AlreadyThere : MoveResult()
+        data class NotEnoughSpace(val need: Long, val free: Long) : MoveResult()
+        data class Failed(val reason: String) : MoveResult()
+        data class Moved(val count: Int) : MoveResult()
+    }
+
+    /**
+     * 현재 저장 위치의 모든 녹음(+.lvl/.stt.json 사이드카)을 target 위치로 옮긴다.
+     *
+     * **all-or-nothing**: 전부 옮겨진 뒤에만 저장 위치 설정을 바꾼다. 도중에 하나라도 실패하면
+     * 이미 옮긴 것을 되돌려(원위치) 원본을 그대로 남긴다 — 데이터 손실·반쪽 상태를 막는다.
+     * 같은 볼륨이면 renameTo(즉시), 다른 볼륨(SD 등)이면 copy 후 원본 삭제. 다른 볼륨으로 옮길
+     * 땐 대상 여유 공간을 먼저 확인한다.
+     *
+     * 파일이 클 수 있으니 **백그라운드 스레드에서 호출**할 것(메인 스레드 금지).
+     */
+    fun moveStorageTo(ctx: Context, targetLoc: Int): MoveResult {
+        val fromLoc = Prefs.getStorageLocation(ctx)
+        if (fromLoc == targetLoc) return MoveResult.AlreadyThere
+        val fromRoot = rootDirFor(ctx, fromLoc)
+        val toRoot = rootDirFor(ctx, targetLoc)
+        if (fromRoot.absolutePath == toRoot.absolutePath) {
+            // 같은 실제 경로(외부 없음→내부 폴백 등) — 위치 설정만 바꾼다.
+            Prefs.setStorageLocation(ctx, targetLoc)
+            return MoveResult.AlreadyThere
+        }
+
+        // 옮길 파일 수집(사이드카 포함). 상대경로(day/name)를 보존한다.
+        data class Item(val src: File, val rel: String)
+        val items = ArrayList<Item>()
+        fromRoot.listFiles()?.filter { it.isDirectory }?.forEach { dayDir ->
+            dayDir.listFiles()?.filter { it.isFile }?.forEach { f ->
+                items.add(Item(f, "${dayDir.name}/${f.name}"))
+            }
+        }
+        if (items.isEmpty()) {
+            Prefs.setStorageLocation(ctx, targetLoc)
+            return MoveResult.Moved(0)
+        }
+
+        // 다른 볼륨 copy 대비 여유 공간 확인.
+        val totalSize = items.sumOf { it.src.length() }
+        if (toRoot.usableSpace < totalSize) {
+            return MoveResult.NotEnoughSpace(totalSize, toRoot.usableSpace)
+        }
+
+        val renamed = ArrayList<Pair<File, File>>()  // (src, dst) — src 는 이미 사라짐(롤백 시 되돌림)
+        val copied = ArrayList<Pair<File, File>>()    // (src, dst) — src 존재(성공 시 삭제)
+        for (it in items) {
+            val dst = File(toRoot, it.rel)
+            dst.parentFile?.mkdirs()
+            val renameOk = try { it.src.renameTo(dst) } catch (_: Exception) { false }
+            if (renameOk) {
+                renamed.add(it.src to dst)
+            } else {
+                val copyOk = try { it.src.copyTo(dst, overwrite = true); true } catch (_: Exception) { false }
+                if (copyOk) {
+                    copied.add(it.src to dst)
+                } else {
+                    // 실패 → 롤백: 지금까지 rename 한 건 되돌리고, copy 한 dst 는 지운다.
+                    renamed.forEach { (s, d) -> try { d.renameTo(s) } catch (_: Exception) {} }
+                    copied.forEach { (_, d) -> try { d.delete() } catch (_: Exception) {} }
+                    // 대상 루트의 빈 잔재 정리
+                    toRoot.listFiles()?.filter { it.isDirectory }?.forEach { if (it.list()?.isEmpty() == true) it.delete() }
+                    return MoveResult.Failed("파일 이동 실패: ${it.rel}")
+                }
+            }
+        }
+
+        // 전부 성공 → 위치 전환 + copy 원본 삭제 + 빈 날짜 폴더 정리.
+        Prefs.setStorageLocation(ctx, targetLoc)
+        copied.forEach { (s, _) -> try { s.delete() } catch (_: Exception) {} }
+        fromRoot.listFiles()?.filter { it.isDirectory }?.forEach {
+            if (it.list()?.isEmpty() == true) it.delete()
+        }
+        return MoveResult.Moved(items.size)
     }
 }
