@@ -23,8 +23,10 @@ import android.text.TextWatcher
 import android.text.format.DateFormat
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -35,6 +37,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -45,7 +49,6 @@ import java.util.Calendar
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var fileListContainer: LinearLayout
     private lateinit var thresholdLabel: TextView
     private var sensitivitySeek: android.widget.SeekBar? = null
     private lateinit var levelBar: ProgressBar
@@ -85,27 +88,46 @@ class MainActivity : AppCompatActivity() {
     // 목록 인라인 재생
     private var playingKey: String? = null
     private var playingFile: File? = null
-    private var playProgressBar: ProgressBar? = null
-    private var playButton: android.widget.Button? = null
     private var seekTracking = false
+    // 인라인 재생 UI 는 뷰 참조를 붙들지 않고 매 틱마다 재생 중인 행의 홀더를 위치로 찾아
+    // 갱신한다. RecyclerView 재활용으로 뷰가 다른 파일로 재바인딩돼도 엉뚱한 행을 건드리지 않는다.
     private val playTick = object : Runnable {
         override fun run() {
-            val bar = playProgressBar
             val pf = playingFile
-            if (bar != null && pf != null) {
-                val pos = Player.currentPositionMs()
-                val dur = Player.durationMs().coerceAtLeast(1)
-                bar.max = dur.toInt()
-                if (!seekTracking) bar.progress = pos.toInt()  // 드래그 중엔 덮어쓰지 않음
-                playButton?.text = if (Player.isPlaying(pf)) "■" else "▶"
+            if (pf != null) {
+                val holder = playingRowHolder()
+                val bar = holder?.itemView?.findViewWithTag<ProgressBar>(TAG_GAUGE)
+                if (bar != null) {
+                    val pos = Player.currentPositionMs()
+                    val dur = Player.durationMs().coerceAtLeast(1)
+                    bar.max = dur.toInt()
+                    if (!seekTracking) bar.progress = pos.toInt()  // 드래그 중엔 덮어쓰지 않음
+                }
+                holder?.itemView?.findViewWithTag<Button>(TAG_PLAYBTN)?.text =
+                    if (Player.isPlaying(pf)) "■" else "▶"
             }
             uiHandler.postDelayed(this, 300)
         }
     }
 
+    // ── 파일 목록 RecyclerView ──
+    private lateinit var filesRecycler: RecyclerView
+    private lateinit var filesAdapter: FilesAdapter
+    private lateinit var filesHeaderContent: LinearLayout      // 목록 위 헤더(검색·칩·전사결과 등)
+    private val fileItems = ArrayList<FileListItem>()          // 현재 표시 모델
+    private val collapsedDays = HashSet<String>()              // 접힌 날짜
+    private val initializedDays = HashSet<String>()            // 접힘 기본값을 이미 정한 날짜
+
+    private sealed class FileListItem {
+        object Header : FileListItem()
+        data class Day(val dayKey: String, val pretty: String, val keys: List<String>, val count: Int) : FileListItem()
+        data class Row(val file: File, val key: String) : FileListItem()
+        data class Empty(val text: String) : FileListItem()
+    }
+
     private val uiHandler = Handler(Looper.getMainLooper())
     // 검색 입력 디바운스 — 타이핑이 멈춘 뒤에만 목록을 다시 그린다.
-    private val searchDebounce = Runnable { if (::fileListContainer.isInitialized) refreshFileList() }
+    private val searchDebounce = Runnable { if (::filesAdapter.isInitialized) refreshFileList() }
     private val levelTick = object : Runnable {
         override fun run() {
             updateStatus()
@@ -301,19 +323,43 @@ class MainActivity : AppCompatActivity() {
         })
 
         // 4) 파일 탭 내용
-        val filesContent = LinearLayout(this).apply {
+        // 파일 목록은 RecyclerView 로 그린다(수백~수천 구간에서도 보이는 행만 만든다).
+        // 검색·칩·전사 검색결과 등 목록 위 요소는 헤더 아이템으로 함께 스크롤한다.
+        filesHeaderContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), 0, dp(16), dp(24))
+            setPadding(dp(16), 0, dp(16), dp(8))
         }
-        buildFilesSection(filesContent)
+        buildFilesSection(filesHeaderContent)
+        filesAdapter = FilesAdapter()
+        filesRecycler = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = filesAdapter
+            setPadding(0, 0, 0, dp(24))
+            clipToPadding = false
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
 
-        val tabHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        tabHost.addView(settingsContent)
-        tabHost.addView(filesContent)
+        // 설정 탭은 그대로 ScrollView. 두 탭을 FrameLayout 에 겹쳐 두고 가시성으로 전환한다.
+        val settingsScroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(settingsContent)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        val contentFrame = FrameLayout(this).apply {
+            addView(settingsScroll)
+            addView(filesRecycler)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
 
         fun selectTab(files: Boolean) {
-            settingsContent.visibility = if (files) View.GONE else View.VISIBLE
-            filesContent.visibility = if (files) View.VISIBLE else View.GONE
+            settingsScroll.visibility = if (files) View.GONE else View.VISIBLE
+            filesRecycler.visibility = if (files) View.VISIBLE else View.GONE
             styleTab(tabSettings, !files)
             styleTab(tabFiles, files)
             if (files) refreshFileList()
@@ -322,14 +368,7 @@ class MainActivity : AppCompatActivity() {
         tabFiles.setOnClickListener { selectTab(true) }
         selectTab(true)   // 파일 탭을 먼저 보여줌
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(tabHost)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-        }
-        outer.addView(scroll)
+        outer.addView(contentFrame)
 
         setContentView(outer)
 
@@ -1571,9 +1610,7 @@ class MainActivity : AppCompatActivity() {
         // 내용(전사) 검색 결과 — 검색어 입력 시 세그먼트 히트를 파일 목록 위에 표시
         transcriptHits = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         parent.addView(transcriptHits)
-
-        fileListContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        parent.addView(fileListContainer)
+        // 파일 목록 자체는 RecyclerView 아이템으로 그린다(fileListContainer 폐지).
     }
 
     /** 전사 인덱스에서 검색어와 맞는 발화 세그먼트를 찾아 표시. 탭하면 그 위치로 재생 이동. */
@@ -1875,21 +1912,26 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /**
+     * 표시 모델(fileItems)을 새로 만들고 RecyclerView 에 반영한다. 뷰를 직접 붙이지 않고
+     * 어댑터가 보이는 행만 그린다. 헤더(검색·칩·전사결과)와 주간 스트립은 한 번 만든 뷰를
+     * 그대로 두고 내용만 갱신한다.
+     */
     private fun refreshFileList() {
-        if (!::fileListContainer.isInitialized) return
+        if (!::filesAdapter.isInitialized) return
         listGeneration++   // 진행 중인 비동기 길이 로딩이 옛 뷰를 갱신하지 않게
-        buildWeekStrip()   // 달력 점 갱신
-        fileListContainer.removeAllViews()
+        buildWeekStrip()   // 달력 점 갱신(헤더 내부)
+        refreshTranscriptHits()   // 내용(전사) 검색 결과 갱신(헤더 내부)
+
+        fileItems.clear()
+        fileItems.add(FileListItem.Header)
         shownKeys.clear()
-        refreshTranscriptHits()   // 내용(전사) 검색 결과도 함께 갱신
-        val dayDirs = Storage.listDayDirs(this)
-        var shown = 0
         val cal = Calendar.getInstance()
         val todayKey = "%04d%02d%02d".format(
             cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH)
         )
-
-        for (dayDir in dayDirs) {
+        var shown = 0
+        for (dayDir in Storage.listDayDirs(this)) {
             val d = dayDir.name
             if (selectedDateKey != null && d != selectedDateKey) continue
             val raw = dayDir.listFiles()
@@ -1904,75 +1946,126 @@ class MainActivity : AppCompatActivity() {
 
             val pretty = if (d.length == 8)
                 "${d.substring(0, 4)}.${d.substring(4, 6)}.${d.substring(6, 8)}" else d
+            val keys = files.map { Storage.relativeKey(this, it) }
+            shownKeys.addAll(keys)   // 접혀 있어도 선택 유지·전체선택 대상
 
-            // 그 날짜의 파일들을 한 그룹으로 묶어, 날짜 헤더 탭으로 접기/펼치기.
-            // 기본: (필터 없음) 오늘만 펼침 / (날짜 선택 시) 그 날 펼침.
-            val dayGroup = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                visibility = if (selectedDateKey != null || d == todayKey) View.VISIBLE else View.GONE
+            // 접힘 기본값: (필터 없음) 오늘만 펼침 / (날짜 선택 시) 그 날 펼침. 이후엔 사용자 토글 유지.
+            if (initializedDays.add(d)) {
+                val defaultExpanded =
+                    (selectedDateKey != null && d == selectedDateKey) ||
+                        (selectedDateKey == null && d == todayKey)
+                if (!defaultExpanded) collapsedDays.add(d)
             }
-            for (f in files) {
-                shownKeys.add(Storage.relativeKey(this, f))
-                dayGroup.addView(buildFileRow(f))
-                shown++
-            }
-            val header = Theme.dateHeader(this, "$pretty  (${files.size})")
-            fun applyArrow() {
-                val collapsed = dayGroup.visibility != View.VISIBLE
-                Theme.setLeadingIcon(this, header, R.drawable.ic_calendar, Theme.TEXT_MUTED, 15)
-                header.text = (if (collapsed) "▸ " else "▾ ") + "$pretty  (${files.size})"
-            }
-            header.setOnClickListener {
-                dayGroup.visibility = if (dayGroup.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                applyArrow()
-            }
-            applyArrow()
 
-            // 날짜 헤더 행: [그날 전체 선택] + [날짜 헤더(탭=접기/펼치기)] + [그날 전체 보관]
-            val dayKeys = files.map { Storage.relativeKey(this, it) }
-            val headerRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+            fileItems.add(FileListItem.Day(d, pretty, keys, files.size))
+            if (!collapsedDays.contains(d)) {
+                for (i in files.indices) fileItems.add(FileListItem.Row(files[i], keys[i]))
             }
-            headerRow.addView(Theme.checkBox(this, "").apply {
-                contentDescription = I18n.t("이 날짜 전체 선택")
-                // 그날 파일이 모두 선택돼 있으면 체크 상태로 표시
-                isChecked = dayKeys.isNotEmpty() && selectedKeys.containsAll(dayKeys)
-                setOnClickListener {
-                    if (isChecked) selectedKeys.addAll(dayKeys)
-                    else selectedKeys.removeAll(dayKeys.toSet())
-                    refreshFileList()
-                }
-            })
-            header.layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            )
-            headerRow.addView(header)
-            // 그날 전체 보관(자동 삭제 제외) 토글 — 모두 보관돼 있으면 체크 상태
-            headerRow.addView(Theme.checkBox(this, "보관").apply {
-                isChecked = dayKeys.isNotEmpty() && dayKeys.all { Prefs.isProtected(this@MainActivity, it) }
-                setOnClickListener {
-                    val on = isChecked
-                    for (k in dayKeys) Prefs.setProtected(this@MainActivity, k, on)
-                    refreshFileList()
-                    Toast.makeText(
-                        this@MainActivity,
-                        if (on) I18n.f("%d개 보관됨", dayKeys.size) else I18n.f("%d개 보관 해제됨", dayKeys.size),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            })
-            fileListContainer.addView(headerRow)
-            fileListContainer.addView(dayGroup)
+            shown += files.size
         }
-        // 더 이상 보이지 않는 선택 항목 정리
         selectedKeys.retainAll(shownKeys.toSet())
         if (shown == 0) {
-            fileListContainer.addView(Theme.body(this).apply {
-                text = if (searchQuery.isEmpty()) "아직 녹음된 파일이 없습니다."
-                else "검색 결과가 없습니다."
-                setTextColor(Theme.TEXT_MUTED)
-            })
+            fileItems.add(FileListItem.Empty(
+                if (searchQuery.isEmpty()) I18n.t("아직 녹음된 파일이 없습니다.")
+                else I18n.t("검색 결과가 없습니다.")
+            ))
+        }
+        filesAdapter.notifyDataSetChanged()
+    }
+
+    /** 날짜 그룹 헤더 행: [그날 전체 선택] + [날짜(탭=접기/펼치기)] + [그날 전체 보관]. */
+    private fun buildDayHeader(item: FileListItem.Day): View {
+        val d = item.dayKey
+        val dayKeys = item.keys
+        val collapsed = collapsedDays.contains(d)
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        headerRow.addView(Theme.checkBox(this, "").apply {
+            contentDescription = I18n.t("이 날짜 전체 선택")
+            isChecked = dayKeys.isNotEmpty() && selectedKeys.containsAll(dayKeys)
+            setOnClickListener {
+                if (isChecked) selectedKeys.addAll(dayKeys)
+                else selectedKeys.removeAll(dayKeys.toSet())
+                refreshFileList()
+            }
+        })
+        val header = Theme.dateHeader(this, "").apply {
+            Theme.setLeadingIcon(this@MainActivity, this, R.drawable.ic_calendar, Theme.TEXT_MUTED, 15)
+            text = (if (collapsed) "▸ " else "▾ ") + "${item.pretty}  (${item.count})"
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                if (collapsed) collapsedDays.remove(d) else collapsedDays.add(d)
+                refreshFileList()
+            }
+        }
+        headerRow.addView(header)
+        headerRow.addView(Theme.checkBox(this, "보관").apply {
+            isChecked = dayKeys.isNotEmpty() && dayKeys.all { Prefs.isProtected(this@MainActivity, it) }
+            setOnClickListener {
+                val on = isChecked
+                for (k in dayKeys) Prefs.setProtected(this@MainActivity, k, on)
+                refreshFileList()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (on) I18n.f("%d개 보관됨", dayKeys.size) else I18n.f("%d개 보관 해제됨", dayKeys.size),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
+        return headerRow
+    }
+
+    // ── 파일 목록 어댑터 ──
+    // Header(검색·칩·전사결과) + Day(그룹 헤더) + Row(파일) + Empty. Row/Day 는 바인딩 시
+    // 기존 빌더(buildFileRow/buildDayHeader)로 내용을 다시 만든다 — 보이는 행만 만들어지므로
+    // 목록이 수천 개여도 한 번에 존재하는 뷰는 화면 분량뿐이다.
+    private inner class FilesAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+        private inner class ContainerVH(val container: FrameLayout) : RecyclerView.ViewHolder(container)
+
+        override fun getItemCount() = fileItems.size
+
+        override fun getItemViewType(position: Int) = when (fileItems[position]) {
+            is FileListItem.Header -> T_HEADER
+            is FileListItem.Day -> T_DAY
+            is FileListItem.Row -> T_ROW
+            is FileListItem.Empty -> T_EMPTY
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            if (viewType == T_HEADER) {
+                filesHeaderContent.layoutParams = RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT
+                )
+                return object : RecyclerView.ViewHolder(filesHeaderContent) {}
+                    .also { it.setIsRecyclable(false) }   // 검색창 포커스·입력 상태 보존
+            }
+            val container = FrameLayout(this@MainActivity).apply {
+                layoutParams = RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT
+                )
+            }
+            return ContainerVH(container)
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            when (val item = fileItems[position]) {
+                is FileListItem.Header -> { /* 한 번 만든 헤더를 그대로 둔다 */ }
+                is FileListItem.Day -> bindContainer(holder, buildDayHeader(item))
+                is FileListItem.Row -> bindContainer(holder, buildFileRow(item.file))
+                is FileListItem.Empty -> bindContainer(holder, Theme.body(this@MainActivity).apply {
+                    text = item.text
+                    setTextColor(Theme.TEXT_MUTED)
+                })
+            }
+        }
+
+        private fun bindContainer(holder: RecyclerView.ViewHolder, view: View) {
+            val c = (holder as ContainerVH).container
+            c.removeAllViews()
+            c.addView(view)
         }
     }
 
@@ -2083,8 +2176,10 @@ class MainActivity : AppCompatActivity() {
                 if (c) selectedKeys.add(key) else selectedKeys.remove(key)
             }
         }
-        // 타임라인 게이지 (이 파일 재생 중에만 보임) — 드래그/탭으로 구간 탐색
+        // 타임라인 게이지 (이 파일 재생 중에만 보임) — 드래그/탭으로 구간 탐색.
+        // 재생 여부는 뷰 참조가 아니라 playingKey 로 판단해, RecyclerView 재활용과 안전하게 공존.
         val gauge = Theme.seekBar(this).apply {
+            tag = TAG_GAUGE
             contentDescription = I18n.t("재생 위치")
             visibility = if (key == playingKey) View.VISIBLE else View.GONE
             setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
@@ -2102,12 +2197,8 @@ class MainActivity : AppCompatActivity() {
             primary = true
         ) {
             togglePlayInline(f, key, playBtn!!, gauge)
-        }.apply { contentDescription = I18n.t("재생/정지") }
-        if (key == playingKey) {           // 재생 중 행이 다시 그려진 경우 참조 갱신
-            playButton = playBtn
-            playProgressBar = gauge
-            playingFile = f
-        }
+        }.apply { tag = TAG_PLAYBTN; contentDescription = I18n.t("재생/정지") }
+        if (key == playingKey) playingFile = f   // 재생 중 행의 File 참조만 최신화
         // 아랫줄(공유/라벨/편집/삭제) — 기본 숨김, 이름 탭하면 토글
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2178,18 +2269,30 @@ class MainActivity : AppCompatActivity() {
 
     // ── 목록 인라인 재생 ──
 
+    /** 재생 중인 행의 어댑터 위치. 없거나 스크롤 밖이면 -1/null. */
+    private fun playingRowPosition(): Int {
+        val key = playingKey ?: return -1
+        return fileItems.indexOfFirst { it is FileListItem.Row && it.key == key }
+    }
+    private fun playingRowHolder(): RecyclerView.ViewHolder? {
+        if (!::filesRecycler.isInitialized) return null
+        val pos = playingRowPosition()
+        return if (pos >= 0) filesRecycler.findViewHolderForAdapterPosition(pos) else null
+    }
+    /** 특정 키의 행을 다시 바인딩(재생 상태 변화 반영). */
+    private fun notifyRowChanged(key: String) {
+        if (!::filesAdapter.isInitialized) return
+        val pos = fileItems.indexOfFirst { it is FileListItem.Row && it.key == key }
+        if (pos >= 0) filesAdapter.notifyItemChanged(pos)
+    }
+
     private fun togglePlayInline(f: File, key: String, btn: Button, gauge: ProgressBar) {
-        // 다른 파일이 재생 중이면 멈추고 그 행 UI 초기화
-        if (playingKey != null && playingKey != key) {
-            Player.stop()
-            playProgressBar?.visibility = View.GONE
-            playButton?.text = "▶"
-        }
+        val prevKey = playingKey
+        // 다른 파일이 재생 중이면 멈추고 그 행을 다시 그려 UI 초기화
+        if (prevKey != null && prevKey != key) Player.stop()
         playingKey = key
         playingFile = f
-        playButton = btn
-        playProgressBar = gauge
-        gauge.visibility = View.VISIBLE
+        gauge.visibility = View.VISIBLE   // 방금 탭한(보이는) 행 즉시 반응
         val started = Player.toggle(
             f,
             onError = {
@@ -2198,10 +2301,10 @@ class MainActivity : AppCompatActivity() {
                 stopInlinePlay()
             }
         ) {
-            // 재생 자연 종료 시
-            gauge.progress = 0
-            btn.text = "▶"
+            // 재생 자연 종료 시(현재 재생 행이면 게이지·버튼 원복)
+            if (playingKey == key) { gauge.progress = 0; btn.text = "▶" }
         }
+        if (prevKey != null && prevKey != key) notifyRowChanged(prevKey)
         if (!started) return
         uiHandler.removeCallbacks(playTick)
         uiHandler.post(playTick)
@@ -2214,12 +2317,10 @@ class MainActivity : AppCompatActivity() {
         val f = playingFile
         if (f != null && Player.isLoaded(f)) Player.stop()
         uiHandler.removeCallbacks(playTick)
-        playProgressBar?.visibility = View.GONE
-        playButton?.text = "▶"
+        val stoppedKey = playingKey
         playingKey = null
         playingFile = null
-        playButton = null
-        playProgressBar = null
+        if (stoppedKey != null) notifyRowChanged(stoppedKey)   // 게이지 숨김·버튼 원복
     }
 
     private fun showLabelDialog(key: String) {
@@ -2575,5 +2676,15 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_RESUME_RECORDING = "resume_recording"
         /** 검색 입력 후 목록 갱신까지 대기(ms). 타이핑 중 재구성을 막는다. */
         private const val SEARCH_DEBOUNCE_MS = 250L
+
+        // 파일 목록 어댑터 뷰 타입.
+        private const val T_HEADER = 0
+        private const val T_DAY = 1
+        private const val T_ROW = 2
+        private const val T_EMPTY = 3
+
+        // 인라인 재생 UI 를 재활용 뷰 안에서 위치로 찾기 위한 태그.
+        private const val TAG_GAUGE = "row_gauge"
+        private const val TAG_PLAYBTN = "row_playbtn"
     }
 }
