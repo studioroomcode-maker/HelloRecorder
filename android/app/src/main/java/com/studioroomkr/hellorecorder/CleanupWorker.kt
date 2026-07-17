@@ -29,9 +29,7 @@ class CleanupWorker(
         for (file in Storage.listAllFiles(ctx)) {
             val key = Storage.relativeKey(ctx, file)
             if (RecordingLogic.isExpired(file.lastModified(), now, retentionHours, protectedSet.contains(key))) {
-                file.delete()
-                Storage.profileFile(file).delete()   // 활동 프로필 사이드카도 함께 정리
-                TranscriptStore.removeFor(ctx, file) // 전사 사이드카 + 검색 인덱스도 정리
+                Storage.deleteRecording(ctx, file)   // 오디오+.lvl+전사+메타 일괄
             }
         }
 

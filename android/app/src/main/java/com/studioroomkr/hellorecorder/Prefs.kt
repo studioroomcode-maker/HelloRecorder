@@ -499,6 +499,23 @@ object Prefs {
         prefs(ctx).edit().remove(BOOKMARK_PREFIX + key).apply()
     }
 
+    /**
+     * 파일 하나에 딸린 모든 파일별 메타데이터를 한 번에 제거(보호·라벨·북마크·카테고리).
+     * 삭제 경로가 이것 하나만 부르면 되도록 모아 둔다 — 예전엔 호출부마다 일부만 지워
+     * 삭제된 파일의 북마크·카테고리가 SharedPreferences 에 영구히 남았다.
+     * (전사 사이드카·검색 인덱스·.lvl 은 파일 사이드카라 Storage.deleteRecording 이 처리.)
+     */
+    fun clearFileMeta(ctx: Context, key: String) {
+        val set = getProtected(ctx)
+        set.remove(key)
+        prefs(ctx).edit()
+            .putStringSet(KEY_PROTECTED, set)
+            .remove(LABEL_PREFIX + key)
+            .remove(BOOKMARK_PREFIX + key)
+            .remove(CAT_PREFIX + key)
+            .apply()
+    }
+
     // ---- 녹음 상태 (엔진 → UI) ----
     fun updateLevel(ctx: Context, level: Double, capturing: Boolean) {
         prefs(ctx).edit()

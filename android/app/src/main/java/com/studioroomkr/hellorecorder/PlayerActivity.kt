@@ -258,8 +258,10 @@ class PlayerActivity : AppCompatActivity() {
         }
         Player.stop()  // 원본을 교체하기 전에 재생 중지
         if (file.delete() && tmp.renameTo(file)) {
-            // 잘라낸 결과는 길이가 달라져 옛 활동 프로필이 안 맞음 → 제거(파형은 디코드로 폴백)
-            Storage.profileFile(file).delete()
+            // 오디오 내용·길이가 바뀌었다 → 옛 오디오에 매인 파생물(파형·전사·검색 인덱스·북마크)을
+            // 모두 무효화한다. 그대로 두면 편집 전 음성·타임스탬프가 계속 검색되고, 북마크·전사
+            // 위치가 새 오디오와 어긋난다. (파형은 아래 load 가 디코드로 다시 만든다.)
+            Storage.invalidateDerived(this, file)
             waveform.load(file)   // 파형 다시 로드
             Toast.makeText(this, I18n.t("덮어쓰기 완료"), Toast.LENGTH_SHORT).show()
         } else {

@@ -1923,12 +1923,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("%d개 파일을 삭제할까요?", files.size))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                for (f in files) {
-                    val key = Storage.relativeKey(this, f)
-                    f.delete()
-                    Prefs.setProtected(this, key, false)
-                    Prefs.removeLabel(this, key)
-                }
+                for (f in files) Storage.deleteRecording(this, f)
                 selectedKeys.clear()
                 refreshFileList()
                 Toast.makeText(this, I18n.f("%d개 삭제됨", files.size), Toast.LENGTH_SHORT).show()
@@ -1956,12 +1951,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("기준보다 짧은 녹음 %d개를 삭제할까요? (보관 파일 제외)", candidates.size))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                for (f in candidates) {
-                    val key = Storage.relativeKey(this, f)
-                    f.delete()
-                    Prefs.setProtected(this, key, false)
-                    Prefs.removeLabel(this, key)
-                }
+                for (f in candidates) Storage.deleteRecording(this, f)
                 refreshFileList()
                 Toast.makeText(this, I18n.f("%d개 삭제됨", candidates.size), Toast.LENGTH_SHORT).show()
             }
@@ -2173,9 +2163,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(I18n.f("%s 파일을 삭제할까요?", f.name))
             .setPositiveButton(I18n.t("삭제")) { _, _ ->
                 stopInlinePlay()
-                f.delete()
-                Prefs.setProtected(this, key, false)
-                Prefs.removeLabel(this, key)
+                Storage.deleteRecording(this, f)
                 refreshFileList()
             }
             .setNegativeButton(I18n.t("취소"), null)

@@ -78,6 +78,38 @@ object Storage {
         listAllFiles(ctx).sumOf { it.length() }
 
     /**
+     * 녹음 하나를 **완전히** 삭제한다 — 오디오(.m4a) + 활동 프로필(.lvl) + 전사 사이드카/검색
+     * 인덱스(.stt.json + DB) + 파일별 Prefs 메타(보호·라벨·북마크·카테고리).
+     *
+     * 모든 삭제 경로(수동 삭제·짧은 녹음 정리·공간 확보·편집 덮어쓰기·보관기간 만료)가
+     * 반드시 이 한 함수만 거치게 한다. 예전엔 경로마다 일부만 지워, 삭제된 파일의 전사가
+     * 검색에 계속 잡히거나 북마크·카테고리가 영구히 남았다. transcript 를 false 로 주면
+     * 전사만 남기는데(편집 후 재전사 예정 등), 그때도 옛 전사·북마크는 무효화해야 한다.
+     *
+     * @return .m4a 삭제 성공 여부.
+     */
+    fun deleteRecording(ctx: Context, file: File, transcript: Boolean = true): Boolean {
+        val key = relativeKey(ctx, file)
+        val deleted = file.delete()
+        profileFile(file).delete()
+        if (transcript) TranscriptStore.removeFor(ctx, file)
+        Prefs.clearFileMeta(ctx, key)
+        return deleted
+    }
+
+    /**
+     * 파일 내용이 편집으로 바뀌었을 때(잘라내기 덮어쓰기 등) 옛 오디오에 매인 파생물을
+     * 무효화한다 — 전사 세그먼트·북마크는 옛 타임스탬프라 새 오디오와 어긋난다. 파형(.lvl)은
+     * 호출부가 다시 로드하며 재생성하므로 여기서 지운다. 오디오 파일 자체는 건드리지 않는다.
+     */
+    fun invalidateDerived(ctx: Context, file: File) {
+        val key = relativeKey(ctx, file)
+        profileFile(file).delete()
+        TranscriptStore.removeFor(ctx, file)
+        Prefs.clearBookmarks(ctx, key)
+    }
+
+    /**
      * 0바이트(빈) 녹음 파일을 정리하고 지운 개수를 돌려준다.
      * 인코딩/먹싱 실패로 남은 깨진 파일이 목록에 '--:--' 로 보이는 것을 막는다.
      * 녹음 중인 파일을 건드리지 않도록, 최근 2분 내 수정된 파일은 건너뛴다(안전장치).
@@ -87,13 +119,7 @@ object Storage {
         var removed = 0
         for (f in listAllFiles(ctx)) {
             if (RecordingLogic.isEmptyAbandoned(f.length(), f.lastModified(), now)) {
-                val key = relativeKey(ctx, f)
-                if (f.delete()) {
-                    removed++
-                    profileFile(f).delete()   // 활동 프로필 사이드카도 함께 정리
-                    Prefs.setProtected(ctx, key, false)
-                    Prefs.removeLabel(ctx, key)
-                }
+                if (deleteRecording(ctx, f)) removed++
             }
         }
         return removed
@@ -180,8 +206,7 @@ object Storage {
             .filter { !protectedKeys.contains(relativeKey(ctx, it)) }
             .sortedBy { it.lastModified() }
         for (f in candidates) {
-            f.delete()
-            profileFile(f).delete()   // 활동 프로필 사이드카도 함께 정리
+            deleteRecording(ctx, f)
             if (freeBytes(ctx) >= minFreeBytes) return true
         }
         return freeBytes(ctx) >= minFreeBytes
