@@ -79,9 +79,14 @@ class ConsentActivity : AppCompatActivity() {
             • 위치(선택): ‘위치 기반 녹음’을 켠 경우에만, 앱을 사용하는 동안 지정한 장소 안/밖을 판단하기 위해 기기 위치를 사용합니다(사용 중에만, 백그라운드 위치는 쓰지 않음). 이 기능을 쓰지 않으면 위치는 수집되지 않습니다.
 
             데이터 보관 방식
-            • 녹음 파일과 모든 설정은 이 기기 안에만 저장됩니다.
-            • 어떤 데이터도 외부 서버로 전송하거나 제3자와 공유하지 않습니다.
+            • 녹음 파일, 전사(받아쓰기) 결과, 녹음 장소 설정, 모든 설정은 이 기기 안에만 저장됩니다. 전사도 기기 안에서 처리합니다. 개발자는 서버를 운영하지 않으며, 이 데이터를 어디로도 업로드하지 않습니다.
             • 녹음 파일은 설정한 보관 기간이 지나면 자동 삭제됩니다(보관 표시 파일 제외). 직접 삭제도 가능합니다.
+
+            네트워크 통신 (선택 기능을 쓸 때만)
+            녹음 내용이 나가는 것은 아니지만, 아래 기능은 제3자 서비스와 통신합니다.
+            • 지도로 장소 지정: OpenStreetMap 에서 지도 타일을 받아옵니다(보고 있는 지도 영역이 전달됩니다).
+            • 말한 내용 검색용 STT 모델 내려받기: Hugging Face 에서 모델 파일(약 133MB)을 받습니다.
+            • Pro 구매·복원: Google Play 결제를 이용합니다.
 
             중요 — 법적 책임
             • 상대방의 동의 없는 통화·대화 녹음은 지역에 따라 불법일 수 있습니다.
@@ -96,9 +101,14 @@ class ConsentActivity : AppCompatActivity() {
             • Location (optional): Only when 'Location-based recording' is on, your device location is used while you are using the app to decide whether you're inside/outside a set zone (while-in-use only; background location is not used). Location is not collected if you don't use this feature.
 
             How your data is stored
-            • Recordings and all settings are stored only on this device.
-            • No data is sent to any external server or shared with third parties.
+            • Recordings, transcripts, your recording-location settings, and all other settings are stored only on this device. Transcription runs on-device. The developer runs no server and never uploads this data anywhere.
             • Recordings are auto-deleted after the retention period you set (except kept files). You can also delete them manually.
+
+            Network use (only for the optional features below)
+            Your recordings never leave the device, but these features do talk to third-party services.
+            • Picking a place on the map: map tiles are fetched from OpenStreetMap (the map area you're viewing is sent).
+            • Downloading the speech-search model: the model file (~133MB) is fetched from Hugging Face.
+            • Buying or restoring Pro: handled by Google Play billing.
 
             Important — Legal responsibility
             • Recording calls/conversations without consent may be illegal depending on your region.
