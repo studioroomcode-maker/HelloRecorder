@@ -57,6 +57,19 @@ object I18n {
             "⚠ %d recent recordings failed to save. This may be a device-compatibility issue — try disabling battery optimization in the Reliability settings.",
 
         // ── 섹션 제목 ──
+        "진단 (상태 요약)" to "Diagnostics (status summary)",
+        "복사" to "Copy",
+        "복사했습니다" to "Copied",
+        "녹음 내용·위치 좌표는 포함되지 않습니다. 기기·설정·개수만 담겨, 문제 신고 시 붙여 넣기 좋습니다." to
+            "No recordings or location coordinates are included — only device, settings, and counts, handy for bug reports.",
+        "녹음 프리셋 (상황별 자동 설정)" to "Recording presets (one-tap setup)",
+        "현재: 사용자 지정. 아래에서 상황을 고르면 관련 설정이 한 번에 맞춰집니다." to
+            "Current: custom. Pick a situation below to set everything at once.",
+        "상황을 고르면 감도·음성 인식·구간 분리·짧은 녹음 기준이 한 번에 맞춰집니다." to
+            "Picking a situation sets sensitivity, voice detection, splitting, and short-clip cutoff at once.",
+        "‘%s’ 프리셋을 적용했습니다" to "Applied the ‘%s’ preset",
+        "회의: 여러 사람·조용한 말 / 강의: 한 사람·긴 침묵 / 개인 메모: 가까이·또렷하게 / 소음 감시: 목소리 아닌 소리도 예민하게." to
+            "Meeting: many quiet speakers / Lecture: one speaker, long pauses / Personal memo: close & clear / Noise watch: sensitive to non-voice sounds too.",
         "녹음 감도 (무음 기준)" to "Sensitivity (silence threshold)",
         "녹음 시간대" to "Recording schedule",
         "위치 기반 녹음" to "Location-based recording",

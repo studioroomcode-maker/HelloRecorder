@@ -104,6 +104,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val uiHandler = Handler(Looper.getMainLooper())
+    // 검색 입력 디바운스 — 타이핑이 멈춘 뒤에만 목록을 다시 그린다.
+    private val searchDebounce = Runnable { if (::fileListContainer.isInitialized) refreshFileList() }
     private val levelTick = object : Runnable {
         override fun run() {
             updateStatus()
@@ -276,6 +278,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), 0, dp(16), dp(24))
         }
         buildProSection(settingsContent)           // 0. Pro
+        buildPresetSection(settingsContent)        // 0.5 녹음 프리셋(상황별 한 번에 설정)
         buildSensitivitySection(settingsContent)   // 1. 녹음 감도
         buildScheduleSection(settingsContent)      // 2. 녹음 시간대
         buildStorageSection(settingsContent)       // 3. 저장공간
@@ -285,6 +288,7 @@ class MainActivity : AppCompatActivity() {
         buildBatterySection(settingsContent)       // 7. 배터리 사용량
         buildLocationSection(settingsContent)      // 8. 위치 기반 녹음
         buildLanguageSection(settingsContent)      // 9. 언어(맨 아래)
+        buildDiagnosticsSection(settingsContent)   // 9.5 진단(상태 요약·공유)
         buildAppInfoSection(settingsContent)        // 10. 프로그램 정보(맨 아래)
 
         // 저작권
@@ -480,6 +484,37 @@ class MainActivity : AppCompatActivity() {
 
     // ───────────────────────── 섹션: 프로그램 정보 ─────────────────────────
 
+    /**
+     * 진단 — 앱/기기/설정 상태를 한 장으로 보여 주고 복사·공유. OEM 별 문제 신고나
+     * 인수인계에서 "어떤 상태였는지"를 한 번에 넘길 수 있게 한다. 읽기 전용이라 위험 없음.
+     */
+    private fun buildDiagnosticsSection(parent: LinearLayout) {
+        val c = Theme.section(this, parent, "진단 (상태 요약)", expanded = false)
+        val report = TextView(this).apply {
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 12f
+            setTextColor(Theme.TEXT_MUTED)
+            setTextIsSelectable(true)
+            text = try { Diagnostics.report(this@MainActivity) } catch (e: Exception) { "진단 생성 실패: ${e.message}" }
+        }
+        c.addView(report)
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        btnRow.addView(Theme.smallButton(this, "복사") {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("diagnostics", report.text))
+            Toast.makeText(this, I18n.t("복사했습니다"), Toast.LENGTH_SHORT).show()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(0, dp(4), dp(3), 0) }
+        })
+        btnRow.addView(Theme.smallButton(this, "새로고침") { recreate() }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(dp(3), dp(4), 0, 0) }
+        })
+        c.addView(btnRow)
+        c.addView(Theme.hint(this, "녹음 내용·위치 좌표는 포함되지 않습니다. 기기·설정·개수만 담겨, 문제 신고 시 붙여 넣기 좋습니다."))
+    }
+
     private fun buildAppInfoSection(parent: LinearLayout) {
         val c = Theme.section(this, parent, "프로그램 정보", expanded = false)
         c.addView(Theme.body(this, "HelloRecorder (절전형 상시 녹음)"))
@@ -490,6 +525,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ───────────────────────── 섹션: 녹음 감도 ─────────────────────────
+
+    /**
+     * 녹음 프리셋 — 상황(회의·강의·개인 메모·소음 감시)을 고르면 감도·VAD·병합 간격·짧은 녹음
+     * 기준을 한 번에 맞춘다. 적용 후 개별 설정은 그대로 손볼 수 있고, 손대면 '사용자 지정'이 된다.
+     */
+    private fun buildPresetSection(parent: LinearLayout) {
+        val c = Theme.section(this, parent, "녹음 프리셋 (상황별 자동 설정)", expanded = false)
+        val currentId = Presets.currentId(this)
+        c.addView(Theme.hint(this, if (currentId == null)
+            "현재: 사용자 지정. 아래에서 상황을 고르면 관련 설정이 한 번에 맞춰집니다."
+        else
+            "상황을 고르면 감도·음성 인식·구간 분리·짧은 녹음 기준이 한 번에 맞춰집니다."))
+
+        // 2열 그리드로 프리셋 버튼 배치.
+        var row: LinearLayout? = null
+        Presets.ALL.forEachIndexed { i, p ->
+            if (i % 2 == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                c.addView(row)
+            }
+            val selected = p.id == currentId
+            val label = (if (selected) "● " else "") + (if (I18n.en) p.nameEn else p.nameKo)
+            val btn = Theme.smallButton(this, label) {
+                Presets.apply(this, p)
+                Toast.makeText(
+                    this,
+                    I18n.f("‘%s’ 프리셋을 적용했습니다", if (I18n.en) p.nameEn else p.nameKo),
+                    Toast.LENGTH_SHORT
+                ).show()
+                recreate()   // 모든 설정 위젯이 새 값을 다시 읽도록
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            }
+            row?.addView(btn)
+        }
+        c.addView(Theme.hint(this, "회의: 여러 사람·조용한 말 / 강의: 한 사람·긴 침묵 / 개인 메모: 가까이·또렷하게 / 소음 감시: 목소리 아닌 소리도 예민하게."))
+    }
 
     private fun buildSensitivitySection(parent: LinearLayout) {
         val c = Theme.section(this, parent, "녹음 감도 (무음 기준)", expanded = false)
@@ -1473,7 +1546,10 @@ class MainActivity : AppCompatActivity() {
             addTextChangedListener(object : TextWatcher {
                 override fun afterTextChanged(s: Editable?) {
                     searchQuery = s?.toString()?.trim() ?: ""
-                    refreshFileList()
+                    // 키 입력마다 전체 디렉터리 재조회 + 뷰 재구성은 무겁다(전사 인덱스 검색 포함).
+                    // 타이핑이 멈춘 뒤에만 한 번 갱신한다.
+                    uiHandler.removeCallbacks(searchDebounce)
+                    uiHandler.postDelayed(searchDebounce, SEARCH_DEBOUNCE_MS)
                 }
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -2361,6 +2437,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        uiHandler.removeCallbacks(searchDebounce)
         metaExecutor.shutdownNow()   // 비동기 길이 로딩 스레드 정리
         // Pro 는 프로세스 수명 싱글턴이다. 여기서 끊지 않으면 파괴된 Activity 가
         // onChanged 람다(this 캡처)에 붙들려 recreate() 때마다 샌다.
@@ -2496,5 +2573,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         /** 부팅 후 '녹음 재개' 알림이 MainActivity 를 열 때 붙이는 플래그. */
         const val EXTRA_RESUME_RECORDING = "resume_recording"
+        /** 검색 입력 후 목록 갱신까지 대기(ms). 타이핑 중 재구성을 막는다. */
+        private const val SEARCH_DEBOUNCE_MS = 250L
     }
 }
