@@ -10,7 +10,8 @@ import java.util.Calendar
  *  - threshold        : 무음 임계값 (슬라이더)
  *  - protected files  : 자동 삭제 제외 (상대경로 키)
  *  - hours            : 요일별 녹음 허용 시간대
- *  - recordingEnabled : 마지막 켜짐 상태 (재부팅 자동 시작 판단)
+ *  - recordingEnabled : 사용자가 켜 두려는 **의도**. "지금 녹음 중"이 아니다 —
+ *    실제 동작 여부는 RecordingService.isRunning() 이 진실이다(둘은 어긋날 수 있다).
  *  - bitRate          : 녹음 품질
  *  - appLock          : 앱 진입 잠금 사용 여부
  *  - labels           : 파일별 라벨/메모
@@ -241,7 +242,7 @@ object Prefs {
     private fun inWindow(startMin: Int, endMin: Int, minute: Int): Boolean =
         RecordingLogic.inWindow(startMin, endMin, minute)
 
-    // ---- 녹음 켜짐 상태 ----
+    // ---- 녹음 켜짐 '의도' (실제 동작 여부는 RecordingService.isRunning()) ----
     fun isRecordingEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_RECORDING_ENABLED, false)
 

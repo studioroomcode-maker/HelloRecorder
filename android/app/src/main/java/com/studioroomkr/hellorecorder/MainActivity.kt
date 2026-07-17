@@ -1,6 +1,7 @@
 package com.studioroomkr.hellorecorder
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.ComponentName
@@ -363,7 +364,9 @@ class MainActivity : AppCompatActivity() {
 
         // 시작/정지 토글 버튼 (하나로 합침)
         recordToggleBtn = Theme.primaryButton(this, "● 시작") {
-            if (Prefs.isRecordingEnabled(this)) {
+            // 희망(Prefs)이 아니라 실제 동작 여부로 분기해야 한다. 켜 뒀지만 안 도는 상태에서
+            // 희망을 보면 '정지'로 잘못 분기해, 재개하려는 탭이 도리어 꺼 버린다.
+            if (RecordingService.isRunning()) {
                 RecordingService.stop(this@MainActivity)
                 Toast.makeText(this@MainActivity, I18n.t("녹음 정지"), Toast.LENGTH_SHORT).show()
                 updateStatus()
@@ -789,7 +792,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildLocationSection(parent: LinearLayout) {
         val c = Theme.section(this, parent, "위치 기반 녹음", expanded = false)
-        c.addView(Theme.hint(this, "지정한 장소 반경에 따라 녹음을 켜고 끕니다. 시간대 설정과 둘 다 만족할 때만 녹음돼요. 위치는 앱을 사용 중일 때만 확인합니다(화면이 꺼진 동안에는 적용되지 않음). 위치를 확인 못 하면 녹음은 그대로 유지됩니다(놓침 방지)."))
+        c.addView(Theme.hint(this, "지정한 장소 반경에 따라 녹음을 켜고 끕니다. 시간대 설정과 둘 다 만족할 때만 녹음돼요. 위치를 확인할 수 없으면(권한 없음·실내 등) 녹음하지 않습니다 — 지정한 곳 밖에서 녹음되지 않게 하는 쪽을 택했습니다."))
+        c.addView(Theme.hint(this, "⚠ 보조 기능입니다. 위치는 앱을 쓰는 동안에만 확인할 수 있어, 화면을 끄고 한참 지나면 위치를 알 수 없게 되고 그동안은 녹음이 멈춥니다. 늘 켜 두는 상시 녹음에는 이 기능을 쓰지 마세요."))
 
         c.addView(Theme.checkBox(this, "위치 기반 녹음 사용").apply {
             isChecked = Prefs.isLocationEnabled(this@MainActivity)
@@ -797,16 +801,30 @@ class MainActivity : AppCompatActivity() {
                 if (on && !Pro.isPro) {
                     btn.isChecked = false   // Pro 전용 → 되돌리고 구매 화면
                     startActivity(Intent(this@MainActivity, ProActivity::class.java))
+                } else if (on && !hasLocationPermission()) {
+                    // 권한 없이 켜면 판정 불가로 녹음이 전부 막힌다. 켜기 전에 권한부터 받는다.
+                    btn.isChecked = false
+                    pendingLocationAction = {
+                        Prefs.setLocationEnabled(this@MainActivity, true)
+                        btn.isChecked = true
+                    }
+                    locationPermLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        )
+                    )
                 } else {
                     Prefs.setLocationEnabled(this@MainActivity, on)
                 }
             }
         })
 
-        // 측위 간격
+        // 위치 확인 간격 — 실제로 재측위하는 게 아니라, 시스템이 마지막으로 알고 있는 위치를
+        // 다시 읽는 주기다. '측위 간격'이라고 하면 이 주기마다 새로 측위하는 것처럼 읽힌다.
         val intervalLabel = Theme.body(this)
         fun refreshInterval() {
-            intervalLabel.text = I18n.f("측위 간격: %s", fmtInterval(Prefs.getLocationIntervalSec(this)))
+            intervalLabel.text = I18n.f("위치 확인 간격: %s", fmtInterval(Prefs.getLocationIntervalSec(this)))
         }
         c.addView(intervalLabel)
         c.addView(Theme.seekBar(this).apply {
@@ -819,7 +837,7 @@ class MainActivity : AppCompatActivity() {
             })
         })
         refreshInterval()
-        c.addView(Theme.hint(this, "짧을수록 위치 변화에 빨리 반응하지만 배터리를 조금 더 씁니다. 권장 1~3분."))
+        c.addView(Theme.hint(this, "짧을수록 위치 변화에 빨리 반응하지만 배터리를 조금 더 씁니다. 권장 1~3분. (앱이 직접 측위하지는 않고, 시스템이 마지막으로 알고 있는 위치를 이 주기로 다시 읽습니다.)"))
 
         // 구역 목록
         c.addView(Theme.subHeader(this, "구역"))
@@ -979,6 +997,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 권한은 hasLocationPermission() 으로 먼저 확인하고, 만약을 대비해 SecurityException 도
+    // 잡는다. lint 는 커스텀 헬퍼를 권한 체크로 인식하지 못해 오탐하므로 억제한다.
+    @SuppressLint("MissingPermission")
     private fun captureLocation(onResult: (Location) -> Unit) {
         if (!hasLocationPermission()) return
         val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
@@ -1010,6 +1031,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 호출부(captureLocation/openMapPicker)가 hasLocationPermission() 으로 가드하며,
+    // 여기서도 예외를 모두 잡는다. lint 오탐 억제.
+    @SuppressLint("MissingPermission")
     private fun bestLastKnown(lm: LocationManager): Location? {
         val providers = listOf(
             LocationManager.GPS_PROVIDER,
@@ -2164,11 +2188,33 @@ class MainActivity : AppCompatActivity() {
         if (!::statusText.isInitialized) return
         val level = Prefs.getCurrentLevel(this)
         val capturing = Prefs.isCapturing(this)
-        val enabled = Prefs.isRecordingEnabled(this)
+        // 희망(켜 둠)과 사실(실제로 도는 중)을 나눠서 본다 — 둘이 어긋나는 구간이 실제로 있다.
+        val desired = Prefs.isRecordingEnabled(this)
+        val running = RecordingService.isRunning()
         levelBar.progress = level.toInt().coerceIn(0, Prefs.MAX_THRESHOLD.toInt())
         when {
-            !enabled -> {
+            !desired -> {
                 statusText.text = I18n.t("⚪ 정지됨")
+                statusText.setTextColor(Theme.TEXT_MUTED)
+            }
+            !running -> {
+                // 켜 두긴 했는데 서비스가 안 돈다(재부팅 후 재개 대기 등). 예전엔 이 상태에서도
+                // '녹음 중'으로 보여, 아무것도 녹음되지 않는 걸 사용자가 알 수 없었다.
+                statusText.text = I18n.t("🟡 멈춤 · 아래를 눌러 재개하세요")
+                statusText.setTextColor(Theme.TEXT_MUTED)
+            }
+            // 위치 게이팅이 막고 있는 중이면 그 사실을 먼저 알린다. 조용히 안 담기는 게
+            // 제일 나쁘다 — 특히 판정 불가로 막힌 경우는 사용자가 손쓸 수 있어야 한다.
+            AudioEngine.locState == AudioEngine.Companion.LocState.NO_PERMISSION -> {
+                statusText.text = I18n.t("🟡 위치 권한이 없어 녹음 안 함 · 설정에서 허용하세요")
+                statusText.setTextColor(Theme.TEXT_MUTED)
+            }
+            AudioEngine.locState == AudioEngine.Companion.LocState.NO_FIX -> {
+                statusText.text = I18n.t("🟡 위치를 확인할 수 없어 녹음 안 함")
+                statusText.setTextColor(Theme.TEXT_MUTED)
+            }
+            AudioEngine.locState == AudioEngine.Companion.LocState.BLOCKED_ZONE -> {
+                statusText.text = I18n.t("🟡 지정한 장소 조건이라 녹음 안 함")
                 statusText.setTextColor(Theme.TEXT_MUTED)
             }
             capturing -> {
@@ -2181,16 +2227,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 시작/정지 토글 버튼: 동작 중이면 '정지'(빨강), 아니면 '시작'(키 컬러)
-        if (::recordToggleBtn.isInitialized && lastToggleEnabled != enabled) {
-            lastToggleEnabled = enabled
-            recordToggleBtn.text = if (enabled) I18n.t("■ 정지") else I18n.t("● 시작")
-            Theme.setPillColor(this, recordToggleBtn, if (enabled) Theme.NEGATIVE else Theme.ACCENT)
+        // 시작/정지 토글 버튼: 실제로 도는 중이면 '정지'(빨강), 아니면 '시작'(키 컬러)
+        if (::recordToggleBtn.isInitialized && lastToggleEnabled != running) {
+            lastToggleEnabled = running
+            recordToggleBtn.text = if (running) I18n.t("■ 정지") else I18n.t("● 시작")
+            Theme.setPillColor(this, recordToggleBtn, if (running) Theme.NEGATIVE else Theme.ACCENT)
         }
 
-        // 시작 시각 + 경과 시간
+        // 시작 시각 + 경과 시간 — 실제로 도는 중일 때만. 예전엔 재부팅 후 남아 있던
+        // 옛 startedAt 으로 있지도 않은 녹음의 경과 시간을 표시했다.
         val startedAt = Prefs.getRecordingStartedAt(this)
-        if (enabled && startedAt > 0) {
+        if (running && startedAt > 0) {
             val start = DateFormat.format(if (I18n.en) "MMM d, HH:mm" else "M월 d일 HH:mm", startedAt)
             val ms = System.currentTimeMillis() - startedAt
             val tail = if (ms < 60_000) I18n.t("방금 시작") else I18n.f("%s 경과", fmtElapsed(ms))

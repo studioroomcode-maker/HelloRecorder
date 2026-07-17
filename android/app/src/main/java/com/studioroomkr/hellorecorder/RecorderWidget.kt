@@ -46,15 +46,22 @@ class RecorderWidget : AppWidgetProvider() {
 
         private fun updateWidget(context: Context, mgr: AppWidgetManager, id: Int) {
             I18n.apply(context)
-            val enabled = Prefs.isRecordingEnabled(context)
+            // '녹음 중'은 서비스가 실제로 돌 때만 띄운다. 켜 뒀지만 안 도는 상태
+            // (Android 14+ 재부팅 후 재개 대기 등)는 따로 보여 줘야 사용자가 속지 않는다.
+            val running = RecordingService.isRunning()
+            val needsResume = RecordingService.needsResume(context)
             val views = RemoteViews(context.packageName, R.layout.widget_recorder)
             views.setTextViewText(
                 R.id.widget_status,
-                if (enabled) I18n.t("🔴 녹음 중") else I18n.t("⚪ 정지됨")
+                when {
+                    running -> I18n.t("🔴 녹음 중")
+                    needsResume -> I18n.t("🟡 탭하여 재개")
+                    else -> I18n.t("⚪ 정지됨")
+                }
             )
             views.setTextViewText(
                 R.id.widget_toggle,
-                if (enabled) I18n.t("■ 정지") else I18n.t("● 시작")
+                if (running) I18n.t("■ 정지") else I18n.t("● 시작")
             )
 
             // requestCode 는 분기마다 다르게 준다. PendingIntent 동등성 판정은 extras 를
@@ -68,7 +75,7 @@ class RecorderWidget : AppWidgetProvider() {
                         pendingFlags()
                     )
 
-                enabled ->
+                running ->
                     PendingIntent.getBroadcast(
                         context, 0,
                         Intent(context, WidgetToggleReceiver::class.java)
@@ -77,6 +84,7 @@ class RecorderWidget : AppWidgetProvider() {
                     )
 
                 else ->
+                    // 정지됨과 '재개 필요' 둘 다 여기로 온다 — 어느 쪽이든 전경에서 시작해야 한다.
                     // 마이크 권한 유무와 무관하게 MainActivity 를 연다. 권한이 없으면
                     // MainActivity 가 권한 요청 흐름을 태우고, 있으면 곧바로 녹음을 시작한다.
                     PendingIntent.getActivity(

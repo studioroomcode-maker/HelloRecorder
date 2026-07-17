@@ -43,6 +43,12 @@ object I18n {
         "녹음 정지" to "Recording stopped",
         "⚪ 정지됨" to "⚪ Stopped",
         "🔴 녹음 중" to "🔴 Recording",
+        "🟡 탭하여 재개" to "🟡 Tap to resume",
+        "🟡 멈춤 · 아래를 눌러 재개하세요" to "🟡 Not running · tap below to resume",
+        "🟡 위치 권한이 없어 녹음 안 함 · 설정에서 허용하세요" to
+            "🟡 Not recording — no location permission · allow it in Settings",
+        "🟡 위치를 확인할 수 없어 녹음 안 함" to "🟡 Not recording — can't determine location",
+        "🟡 지정한 장소 조건이라 녹음 안 함" to "🟡 Not recording — your location rule says so",
         "🔴 녹음 중 · 음량 %d" to "🔴 Recording · level %d",
         "🟢 대기 중 · 음량 %d" to "🟢 Waiting · level %d",
         "구간: %s ~ %s" to "Section: %s ~ %s",
@@ -122,12 +128,14 @@ object I18n {
         "수요일" to "Wednesday", "목요일" to "Thursday", "금요일" to "Friday", "토요일" to "Saturday",
 
         // ── 위치 ──
-        "지정한 장소 반경에 따라 녹음을 켜고 끕니다. 시간대 설정과 둘 다 만족할 때만 녹음돼요. 위치는 앱을 사용 중일 때만 확인합니다(화면이 꺼진 동안에는 적용되지 않음). 위치를 확인 못 하면 녹음은 그대로 유지됩니다(놓침 방지)." to
-            "Turns recording on/off by zone radius. Records only when both the schedule and location allow. Location is only checked while the app is in use (not while the screen is off). If location can't be read, recording continues (so nothing is missed).",
+        "지정한 장소 반경에 따라 녹음을 켜고 끕니다. 시간대 설정과 둘 다 만족할 때만 녹음돼요. 위치를 확인할 수 없으면(권한 없음·실내 등) 녹음하지 않습니다 — 지정한 곳 밖에서 녹음되지 않게 하는 쪽을 택했습니다." to
+            "Turns recording on/off by zone radius. Records only when both the schedule and location allow. If location can't be determined (no permission, indoors, …) it does not record — we chose to err on the side of not recording outside your zones.",
+        "⚠ 보조 기능입니다. 위치는 앱을 쓰는 동안에만 확인할 수 있어, 화면을 끄고 한참 지나면 위치를 알 수 없게 되고 그동안은 녹음이 멈춥니다. 늘 켜 두는 상시 녹음에는 이 기능을 쓰지 마세요." to
+            "⚠ This is a helper feature. Location can only be read while you're using the app, so a while after the screen goes off it becomes unknown and recording pauses. Don't use this for always-on recording.",
         "위치 기반 녹음 사용" to "Enable location-based recording",
-        "측위 간격: %s" to "Location interval: %s",
-        "짧을수록 위치 변화에 빨리 반응하지만 배터리를 조금 더 씁니다. 권장 1~3분." to
-            "Shorter reacts faster to movement but uses a bit more battery. 1–3 min recommended.",
+        "위치 확인 간격: %s" to "Location check interval: %s",
+        "짧을수록 위치 변화에 빨리 반응하지만 배터리를 조금 더 씁니다. 권장 1~3분. (앱이 직접 측위하지는 않고, 시스템이 마지막으로 알고 있는 위치를 이 주기로 다시 읽습니다.)" to
+            "Shorter reacts faster to movement but uses a bit more battery. 1–3 min recommended. (The app doesn't fix your position itself — it re-reads the last location the system already knows, at this interval.)",
         "구역" to "Zones",
         "현재 위치로 구역 추가" to "Add zone at current location",
         "지도에서 구역 추가" to "Add zone from map",

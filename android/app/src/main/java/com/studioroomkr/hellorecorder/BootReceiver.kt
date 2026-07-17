@@ -24,7 +24,13 @@ class BootReceiver : BroadcastReceiver() {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
         if (Prefs.isRecordingEnabled(context)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // 재부팅으로 녹음이 끊겼다 — 재개 전까지는 '동작 중'이 아니다. 부팅 전의
+                // 시작 시각을 남겨 두면 있지도 않은 녹음의 경과 시간이 표시된다.
+                Prefs.setRecordingStartedAt(context, 0L)
                 postResumeNotification(context)
+                // 알림 권한이 없으면 이 알림은 안 보인다. 그래도 위젯·앱 화면이
+                // '탭하여 재개'를 보여 주므로 재개 경로가 완전히 막히지는 않는다.
+                RecorderWidget.updateAll(context)
             } else {
                 RecordingService.start(context)
             }

@@ -61,15 +61,37 @@ class AudioEngine(
         private const val RUMBLE_CUT_HZ = 110.0
         // 1시간마다 파일 교체
         private const val HOUR_MS = 60 * 60 * 1000L
-        // 배터리 표본 주기 (위치 간격은 Prefs 에서 동적으로 읽음)
+        // 배터리 표본 주기 (위치 확인 간격은 Prefs 에서 동적으로 읽음)
         private const val BATT_SAMPLE_MS = 2 * 60 * 1000L
         private const val LOC_MAX_AGE_MS = 10 * 60 * 1000L
+
+        /**
+         * 위치 게이팅의 현재 상태. UI 가 읽어 사용자에게 보여 준다.
+         * RecordingService.isRunning() 과 같은 이유로 메모리 값이다(엔진이 죽으면 같이 사라진다).
+         */
+        enum class LocState {
+            OFF,            // 위치 기능 꺼짐 — 게이팅 안 함
+            ALLOWED,        // 위치 확인됨, 녹음 허용 구역
+            BLOCKED_ZONE,   // 위치 확인됨, 사용자가 지정한 대로 녹음 금지 구역
+            NO_PERMISSION,  // 위치 권한 없음 → 판정 불가
+            NO_FIX,         // 위치를 못 읽거나 너무 오래됨 → 판정 불가
+        }
+
+        @Volatile
+        var locState: LocState = LocState.OFF
+            private set
+
         // 캡처 중 임계 하향 비율(히스테리시스) — 이어지는 작은 말을 같은 구간으로 잡음.
         // 낮출수록 예민(0.4 = 시작 임계의 40%). 기기 테스트로 조정.
         private const val CONT_RATIO = 0.4
     }
 
-    // 위치 게이팅 결과 (true = 녹음 허용). 위치 못 읽으면 허용 유지.
+    // 위치 게이팅 결과 (true = 녹음 허용).
+    //
+    // 판정 불가(권한 없음/위치 모름)일 때는 **막는다**(fail-closed). 예전엔 허용했는데,
+    // '이 구역에서만 녹음'을 켠 사용자에게는 정확히 반대 동작이라 단순 오작동이 아니라
+    // 프라이버시 문제였다 — 지정한 곳을 벗어나도, 권한을 껐어도 계속 녹음됐다.
+    // '이 구역에선 녹음 금지'도 마찬가지로, 모르면 녹음하지 않는 쪽이 안전하다.
     @Volatile private var locationAllowed = true
 
     private fun sampleBattery() {
@@ -79,7 +101,12 @@ class AudioEngine(
     }
 
     private fun sampleLocation() {
-        if (!Prefs.isLocationEnabled(context)) { locationAllowed = true; return }
+        // 기능이 꺼져 있거나 구역이 하나도 없으면 게이팅할 게 없다 → 그냥 녹음.
+        if (!Prefs.isLocationEnabled(context) || Prefs.getZones(context).isEmpty()) {
+            locState = LocState.OFF
+            locationAllowed = true
+            return
+        }
 
         val fine = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION
@@ -87,9 +114,19 @@ class AudioEngine(
         val coarse = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
-        if (!fine && !coarse) { locationAllowed = true; return }  // 권한 없으면 게이팅 불가 → 허용
+        if (!fine && !coarse) {
+            // 권한이 회수된 경우. 판정할 수 없으니 막고, UI 가 이유를 보여 준다.
+            locState = LocState.NO_PERMISSION
+            locationAllowed = false
+            return
+        }
 
-        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        if (lm == null) {
+            locState = LocState.NO_FIX
+            locationAllowed = false
+            return
+        }
         val providers = listOf(
             LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
@@ -109,10 +146,12 @@ class AudioEngine(
 
         val b = best
         if (b == null || System.currentTimeMillis() - b.time > LOC_MAX_AGE_MS) {
-            locationAllowed = true   // 위치 불확실 → 허용(소리 놓치지 않게)
+            locState = LocState.NO_FIX
+            locationAllowed = false
             return
         }
         locationAllowed = Prefs.isLocationAllowed(context, b.latitude, b.longitude)
+        locState = if (locationAllowed) LocState.ALLOWED else LocState.BLOCKED_ZONE
     }
 
     @Volatile private var running = false
@@ -122,6 +161,8 @@ class AudioEngine(
     fun start() {
         if (running) return
         running = true
+        // 첫 판정 전까지는 아직 아무것도 모른다 — 켜 있는 동안만 유효한 값이라 여기서 초기화한다.
+        locState = LocState.OFF
         thread = Thread { loop() }.apply { start() }
     }
 
@@ -130,6 +171,7 @@ class AudioEngine(
         thread?.join(3_000)
         thread = null
         releaseWakeLock()
+        locState = LocState.OFF
     }
 
     // 목소리 강조용 오디오 효과 (NS: 정상 소음 억제 — GTCRN 로드 실패 시 폴백으로만 연결)
