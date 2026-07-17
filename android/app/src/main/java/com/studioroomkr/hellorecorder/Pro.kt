@@ -125,7 +125,11 @@ object Pro {
         billing?.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder()
                 .setProductType(BillingClient.ProductType.INAPP).build()
-        ) { _, purchases ->
+        ) { result, purchases ->
+            // 응답이 OK 일 때만 소유 여부를 신뢰한다. 네트워크·Play 서비스 일시 오류로
+            // 조회가 실패하면 빈 목록이 오는데, 예전엔 이를 '미보유'로 보고 setPro(false) 해
+            // 정상 결제 사용자의 Pro 를 꺼 버렸다. 오류 시엔 캐시 상태를 그대로 둔다.
+            if (result.responseCode != BillingClient.BillingResponseCode.OK) return@queryPurchasesAsync
             var owned = false
             for (p in purchases) {
                 handlePurchase(p)
