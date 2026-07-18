@@ -258,10 +258,15 @@ object Storage {
             return MoveResult.Moved(0)
         }
 
-        // 다른 볼륨 copy 대비 여유 공간 확인.
-        val totalSize = items.sumOf { it.src.length() }
-        if (toRoot.usableSpace < totalSize) {
-            return MoveResult.NotEnoughSpace(totalSize, toRoot.usableSpace)
+        // 같은 볼륨이면 renameTo 가 추가 공간 없이 즉시 옮긴다 → 공간 확인 불필요.
+        // (내부↔외부 앱 전용 폴더는 대개 같은 물리 볼륨이라, 무조건 확인하면 여유 공간이
+        //  총 녹음 크기보다 작을 때 옮길 수 있는데도 잘못 막힌다.) 다른 볼륨(SD 등)일 때만
+        //  copy 가 필요하므로 그때만 대상 여유 공간을 확인한다.
+        if (!sameVolume(fromRoot, toRoot)) {
+            val totalSize = items.sumOf { it.src.length() }
+            if (toRoot.usableSpace < totalSize) {
+                return MoveResult.NotEnoughSpace(totalSize, toRoot.usableSpace)
+            }
         }
 
         val renamed = ArrayList<Pair<File, File>>()  // (src, dst) — src 는 이미 사라짐(롤백 시 되돌림)
@@ -294,5 +299,21 @@ object Storage {
             if (it.list()?.isEmpty() == true) it.delete()
         }
         return MoveResult.Moved(items.size)
+    }
+
+    /** 두 루트가 같은 볼륨인지 — 빈 프로브 파일을 renameTo 로 옮겨 판별(성공=같은 볼륨). */
+    private fun sameVolume(fromRoot: File, toRoot: File): Boolean {
+        val name = ".mvprobe_${System.nanoTime()}"
+        val src = File(fromRoot, name)
+        val dst = File(toRoot, name)
+        return try {
+            src.writeBytes(ByteArray(0))
+            src.renameTo(dst)
+        } catch (_: Exception) {
+            false
+        } finally {
+            try { src.delete() } catch (_: Exception) {}
+            try { dst.delete() } catch (_: Exception) {}
+        }
     }
 }
