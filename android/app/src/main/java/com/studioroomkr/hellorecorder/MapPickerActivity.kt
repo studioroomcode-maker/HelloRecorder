@@ -18,7 +18,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.TileSourcePolicy
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
@@ -71,7 +72,10 @@ class MapPickerActivity : AppCompatActivity() {
 
         // 지도
         map = MapView(this).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            // 타일을 명시적으로 HTTPS 로 고정한다(라이브러리 기본값에 의존하지 않음).
+            // 앱은 usesCleartextTraffic 미설정 + targetSdk 36 이라 평문 HTTP 는 이미 플랫폼이
+            // 막지만, 소스 URL 자체를 https 로 못박아 두면 버전·기본값 변화와 무관하게 안전하다.
+            setTileSource(HTTPS_OSM_TILES)
             setMultiTouchControls(true)
             controller.setZoom(16.0)
             controller.setCenter(selected)
@@ -214,5 +218,20 @@ class MapPickerActivity : AppCompatActivity() {
         const val EXTRA_LAT = "lat"
         const val EXTRA_LNG = "lng"
         const val EXTRA_RADIUS = "radius"
+
+        // OpenStreetMap 타일을 HTTPS 로 못박은 소스. 정책(정상 User-Agent·대량 다운로드 금지)은
+        // 기본 MAPNIK 과 동일하게 유지해 OSM 사용 규약을 지킨다.
+        private val HTTPS_OSM_TILES = XYTileSource(
+            "Mapnik", 0, 19, 256, ".png",
+            arrayOf("https://tile.openstreetmap.org/"),
+            "© OpenStreetMap contributors",
+            TileSourcePolicy(
+                2,
+                TileSourcePolicy.FLAG_NO_BULK
+                    or TileSourcePolicy.FLAG_NO_PREVENTIVE
+                    or TileSourcePolicy.FLAG_USER_AGENT_MEANINGFUL
+                    or TileSourcePolicy.FLAG_USER_AGENT_NORMALIZED
+            )
+        )
     }
 }

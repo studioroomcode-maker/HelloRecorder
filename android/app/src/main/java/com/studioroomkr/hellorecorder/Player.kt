@@ -47,10 +47,14 @@ object Player {
             player.prepare()
             applySpeed(player)
             player.start()
-            android.util.Log.i(TAG, "playing ${file.name} dur=${player.duration} playing=${player.isPlaying}")
+            // 파일명은 날짜 기반이라 민감도는 낮지만, 릴리스 logcat 에는 남기지 않는다
+            // (강한 온디바이스 프라이버시 원칙 — 로그는 디버그 빌드에서만).
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i(TAG, "playing ${file.name} dur=${player.duration} playing=${player.isPlaying}")
+            }
         } catch (e: Exception) {
-            // 손상 파일 등 정상 경로의 실패지만, 기기별 원인 추적을 위해 남긴다(개인정보 없음)
-            android.util.Log.w(TAG, "toggle failed for ${file.name}: $e")
+            // 손상 파일 등 정상 경로의 실패. 디버그 빌드에서만 기기별 원인 추적용으로 남긴다.
+            if (BuildConfig.DEBUG) android.util.Log.w(TAG, "toggle failed for ${file.name}: $e")
             try { player.release() } catch (_: Exception) {}
             mp = null
             currentPath = null

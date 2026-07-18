@@ -89,6 +89,20 @@ class StorageMoveTest {
         assertEquals(Prefs.STORAGE_EXTERNAL, Prefs.getStorageLocation(ctx))
     }
 
+    @Test fun 같은_볼륨이면_여유공간이_총크기보다_작아도_이동된다() {
+        // 내부→외부는 대개 같은 물리 볼륨이라 renameTo(추가 공간 0). 여유 공간 확인이
+        // 무조건 걸리면(총 녹음 크기 > 여유 공간) 옮길 수 있는데도 막히던 회귀를 잡는다.
+        // 파일 하나가 현재 볼륨 여유 공간보다 크지는 않지만, "총 크기 기준 사전 차단"이
+        // 사라졌는지를 실제 이동 성공으로 확인한다.
+        val f = makeRecording("20200201", "big.m4a", ByteArray(2 * 1024 * 1024))  // 2MB
+        val key = Storage.relativeKey(ctx, f)
+        val result = Storage.moveStorageTo(ctx, Prefs.STORAGE_EXTERNAL)
+        assertTrue("같은 볼륨 이동은 성공해야: $result", result is Storage.MoveResult.Moved)
+        val moved = Storage.listAllFiles(ctx).firstOrNull { it.name == "big.m4a" }
+        assertTrue("옮겨진 파일 존재", moved != null)
+        assertEquals("메타 키 보존", key, Storage.relativeKey(ctx, moved!!))
+    }
+
     private fun assertArrayEquals4(expected: ByteArray, actual: ByteArray) {
         assertEquals("길이", expected.size, actual.size)
         for (i in expected.indices) assertEquals("byte $i", expected[i], actual[i])

@@ -39,6 +39,14 @@ object FileMetaStore {
         }
 
     /** 첫 접근 시 SharedPreferences → DB 1회 마이그레이션 + 캐시 로드. 이후엔 캐시만. */
+    /**
+     * DB 로드 + 1회 마이그레이션을 미리 돌려 둔다(앱 시작 시 백그라운드에서 호출).
+     * 목록의 첫 메타 접근이 메인 스레드에서 무거운 로드를 유발하지 않게 한다.
+     */
+    fun warmUp(ctx: Context) {
+        try { ensureLoaded(ctx) } catch (_: Exception) {}
+    }
+
     private fun ensureLoaded(ctx: Context) {
         if (loaded) return
         synchronized(this) {
