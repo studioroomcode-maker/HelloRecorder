@@ -105,8 +105,14 @@ object I18n {
         "녹음하려면 설정에서 마이크 권한을 허용해 주세요." to
             "To record, please allow the microphone permission in Settings.",
         "설정 열기" to "Open settings",
-        "알림 권한이 없어 녹음 중 상태 알림이 표시되지 않습니다" to
-            "Without notification permission, the recording status notification won't be shown",
+        "알림이 꺼져 있습니다" to "Notifications are off",
+        "알림이 꺼져 있어 '녹음 중' 표시가 나타나지 않습니다. 녹음 중인지 확인하기 어려우니 알림을 켜는 것을 권합니다." to
+            "Notifications are off, so the \"Recording\" indicator won't appear. " +
+                "That makes it hard to tell when recording is active — turning notifications on is recommended.",
+        "알림 켜기" to "Turn on notifications",
+        "이대로 녹음" to "Record anyway",
+        "\n⚠ 알림 꺼짐 · '녹음 중' 알림이 표시되지 않습니다" to
+            "\n⚠ Notifications off · the \"Recording\" notification isn't shown",
         "재생할 수 없는 파일입니다" to "This file can't be played",
         "정밀 음성 확인(Silero)·목소리 강조(신경망 잡음 제거)·먼 소리 줄이기는 Pro 전용입니다. ‘사람 목소리 우선’은 무료로 쓸 수 있어요." to
             "Precise voice check (Silero), voice enhancement (neural noise removal) and distant-sound reduction are Pro. 'Human-voice priority' is free to use.",
