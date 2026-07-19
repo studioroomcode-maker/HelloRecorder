@@ -7,12 +7,46 @@ plugins {
 }
 
 // 릴리스 서명 정보는 keystore.properties(루트, git 제외)에서 읽는다.
-// 파일이 없으면 서명 설정을 건너뛴다(디버그 빌드/키 없는 환경에서도 빌드 가능).
 // 형식은 keystore.properties.example 참고.
+//
+// 설정이 불완전하면 서명 설정을 만들지 않고, 릴리스 패키징 단계에서 verifyReleaseSigning 이
+// 빌드를 세운다. 예전엔 조용히 미서명 AAB 가 나왔는데 Play 가 이를 거부해서, 업로드 직전에야
+// 문제를 알게 됐다 — 그래서 빌드 시점에 실패시킨다.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
+
+// 서명 없이 릴리스 산출물을 만들고 싶을 때만(로컬 크기 확인 등):
+//   ./gradlew :app:bundleRelease -PallowUnsignedRelease=true
+val allowUnsignedRelease = providers.gradleProperty("allowUnsignedRelease")
+    .map { it.toBoolean() }.getOrElse(false)
+
+val SIGNING_KEYS = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+
+// 서명 설정이 실제로 쓸 수 있는 상태인지 확인하고, 아니면 사람이 읽을 이유를 돌려준다.
+val signingProblem: String? = when {
+    !keystorePropsFile.exists() ->
+        "keystore.properties 가 없다 (${keystorePropsFile.path})\n" +
+            "  keystore.properties.example 를 같은 폴더에 keystore.properties 로 복사한 뒤 값을 채운다."
+
+    SIGNING_KEYS.any { keystoreProps.getProperty(it).isNullOrBlank() } ->
+        "keystore.properties 에 값이 빠졌다: " +
+            SIGNING_KEYS.filter { keystoreProps.getProperty(it).isNullOrBlank() }.joinToString()
+
+    SIGNING_KEYS.any { keystoreProps.getProperty(it).contains("CHANGEME") } ->
+        "keystore.properties 가 아직 템플릿 상태다 (CHANGEME 미치환): " +
+            SIGNING_KEYS.filter { keystoreProps.getProperty(it).contains("CHANGEME") }.joinToString()
+
+    !rootProject.file(keystoreProps.getProperty("storeFile")).exists() ->
+        "storeFile 이 가리키는 키스토어가 없다: " +
+            rootProject.file(keystoreProps.getProperty("storeFile")).path + "\n" +
+            "  경로는 android/ 기준 상대경로다(저장소 루트의 키는 ../keystore/... )."
+
+    else -> null
+}
+
+val signingReady = signingProblem == null
 
 // ---- sherpa-onnx AAR 좌표 ----
 // 저장소는 settings.gradle.kts 의 ivy(GitHub 릴리스). group 은 Maven 좌표가 아니라
@@ -57,8 +91,8 @@ android {
         buildConfig = true   // BuildConfig.DEBUG 사용 (디버그 빌드 자동 Pro)
     }
     signingConfigs {
-        // keystore.properties 가 있을 때만 release 서명 설정을 만든다.
-        if (keystorePropsFile.exists()) {
+        // 설정이 온전할 때만 release 서명 설정을 만든다(값이 비었거나 CHANGEME 면 만들지 않는다).
+        if (signingReady) {
             create("release") {
                 storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
                 storePassword = keystoreProps.getProperty("storePassword")
@@ -72,8 +106,7 @@ android {
             optimization {
                 enable = false
             }
-            // 키가 준비된 경우에만 release 서명을 붙인다(없으면 미서명 — 로컬 빌드용).
-            if (keystorePropsFile.exists()) {
+            if (signingReady) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
@@ -163,3 +196,28 @@ val verifySherpaAar = tasks.register<VerifyChecksumTask>("verifySherpaAar") {
 }
 
 tasks.named("preBuild") { dependsOn(verifySherpaAar) }
+
+abstract class VerifyReleaseSigningTask : DefaultTask() {
+    @get:Input @get:Optional abstract val problem: Property<String>
+
+    @TaskAction
+    fun verify() {
+        val why = problem.orNull ?: return
+        throw GradleException(
+            "릴리스 서명 설정이 준비되지 않았다 — 이대로면 미서명 AAB 가 나오고 Play 가 업로드를 거부한다.\n" +
+                "  $why\n" +
+                "별칭이 기억나지 않으면: keytool -list -v -keystore <키스토어 경로>\n" +
+                "서명 없이 산출물만 확인하려면: ./gradlew :app:bundleRelease -PallowUnsignedRelease=true"
+        )
+    }
+}
+
+// 릴리스 패키징(AAB·APK) 직전에 서명 설정을 확인한다. 검증 자체는 산출물을 만들지 않으므로
+// 디버그 빌드나 test/lint 에는 걸리지 않는다.
+val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
+    description = "릴리스 서명 설정(keystore.properties)이 온전한지 확인"
+    problem.set(if (allowUnsignedRelease) null else signingProblem)
+}
+
+tasks.matching { it.name == "packageReleaseBundle" || it.name == "packageRelease" }
+    .configureEach { dependsOn(verifyReleaseSigning) }
