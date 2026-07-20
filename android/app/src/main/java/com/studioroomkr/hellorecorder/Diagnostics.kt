@@ -69,10 +69,43 @@ object Diagnostics {
         sb.appendLine("- 검색 인덱스 파일 수: ${indexedCount(ctx)}")
         sb.appendLine()
 
+        sb.appendLine("[음성 엔진 실제 로드]")
+        sb.appendLine("- 목소리 강조(GTCRN): ${enhancerStatus(ctx)}")
+        sb.appendLine("- 전사기(STT): ${transcriberStatus(ctx)}")
+        sb.appendLine()
+
         sb.appendLine("[신뢰성]")
         sb.appendLine("- 인코딩 실패 누적: ${Prefs.getEncodeFailCount(ctx)}")
         sb.appendLine("- 저장된 크래시 로그: ${CrashLogger.count(ctx)}개")
         return sb.toString()
+    }
+
+    /**
+     * 설정이 '켜짐'인 것과 엔진이 실제로 뜨는 것은 다르다.
+     *
+     * 실제로 두 기능이 네이티브 로드 실패로 조용히 꺼진 채 한참 굴러간 적이 있다
+     * (libonnxruntime.so 심볼 버전 충돌). 설정값만 찍는 진단으로는 그걸 잡을 수 없었다.
+     * 그래서 여기서 한 번 만들어 보고 결과를 적는다 — 실패면 이유까지 남긴다.
+     */
+    private fun enhancerStatus(ctx: Context): String {
+        val e = SpeechEnhancer.create(ctx)
+        return if (e != null) {
+            e.close()
+            "정상"
+        } else {
+            "실패 — ${SpeechEnhancer.lastCreateError ?: "원인 불명"}"
+        }
+    }
+
+    private fun transcriberStatus(ctx: Context): String {
+        if (!SttModel.isAvailable(ctx)) return "모델 없음(미설치)"
+        val t = Transcriber.create(ctx)
+        return if (t != null) {
+            t.close()
+            "정상"
+        } else {
+            "실패 — ${Transcriber.lastCreateError ?: "원인 불명"}"
+        }
     }
 
     private fun indexedCount(ctx: Context): Int =
