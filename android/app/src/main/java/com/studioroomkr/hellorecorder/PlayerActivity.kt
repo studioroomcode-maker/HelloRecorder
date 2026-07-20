@@ -78,16 +78,31 @@ class PlayerActivity : AppCompatActivity() {
                     TranscribeWorker.runOne(this@PlayerActivity, file)
                 }
                 addView(btn)
-                // 끝나면 화면을 다시 그려 전사문이 실제로 보이게 한다.
+                // 끝나면 화면을 다시 그려 전사문이 보이게 하거나, 안 됐으면 '왜' 안 됐는지 밝힌다.
+                // 예전엔 결과를 구분하지 않고 전부 '말소리를 찾지 못했다'로 뭉뚱그려서, 목소리가
+                // 또렷한 녹음도 그렇게 표시돼 원인을 짐작할 수 없었다.
                 TranscribeWorker.observeOne(this@PlayerActivity, file).observe(this@PlayerActivity) { infos ->
-                    if (infos.any { it.state == WorkInfo.State.SUCCEEDED } && !isFinishing) {
-                        if (TranscriptStore.readSidecar(file)?.segments?.isNotEmpty() == true) {
-                            recreate()
-                        } else {
-                            btn.isEnabled = true
-                            btn.text = I18n.t("이 녹음 전사하기")
-                            status.text = I18n.t("전사할 말소리를 찾지 못했습니다. 조용한 녹음일 수 있어요.")
-                        }
+                    val info = infos.firstOrNull { it.state.isFinished } ?: return@observe
+                    if (isFinishing) return@observe
+                    if (TranscriptStore.readSidecar(file)?.segments?.isNotEmpty() == true) {
+                        recreate(); return@observe
+                    }
+                    btn.isEnabled = true
+                    btn.text = I18n.t("이 녹음 전사하기")
+                    val detail = info.outputData.getString(TranscribeWorker.KEY_DETAIL).orEmpty()
+                    status.text = when (info.outputData.getString(TranscribeWorker.KEY_STATUS)) {
+                        "no_speech" ->
+                            I18n.t("전사할 말소리를 찾지 못했습니다. 조용한 녹음일 수 있어요.") + "\n($detail)"
+                        "load_failed" ->
+                            I18n.t("음성 인식 모델을 불러오지 못했습니다. 설정에서 모델을 다시 받아 주세요.") + "\n$detail"
+                        "no_model" ->
+                            I18n.t("음성 인식 모델이 아직 없습니다. 설정 → 녹음 감도에서 모델을 먼저 받아 주세요.")
+                        "not_pro" ->
+                            I18n.t("말한 내용으로 찾기(자동 전사)는 Pro 전용입니다.")
+                        "missing_file" ->
+                            I18n.t("녹음 파일을 찾을 수 없습니다.")
+                        else ->
+                            I18n.t("전사에 실패했습니다.") + "\n$detail"
                     }
                 }
             }

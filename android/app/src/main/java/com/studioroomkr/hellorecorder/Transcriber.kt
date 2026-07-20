@@ -121,9 +121,22 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
 
         fun isModelAvailable(ctx: Context): Boolean = findModel(ctx) != null
 
-        /** 전사기 생성. 모델 없음/네이티브 로드 실패 시 null(호출부는 조용히 건너뜀). */
+        /**
+         * 마지막 create() 실패 이유. 예전엔 예외를 통째로 삼켜서, 모델 파일은 있는데 인식기
+         * 생성이 실패하면 '전사했는데 말소리가 없었다'와 구분이 안 됐다(실제로 그렇게 오진했다).
+         * isModelAvailable() 은 파일 존재만 보므로 이 경로를 걸러주지 못한다.
+         */
+        @Volatile var lastCreateError: String? = null
+            private set
+
+        /** 전사기 생성. 모델 없음/네이티브 로드 실패 시 null(이유는 lastCreateError). */
         fun create(ctx: Context): Transcriber? {
-            val model = findModel(ctx) ?: return null
+            lastCreateError = null
+            val model = findModel(ctx)
+            if (model == null) {
+                lastCreateError = "모델 파일을 찾지 못했습니다 (${modelDir(ctx).absolutePath})"
+                return null
+            }
             return try {
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
@@ -141,7 +154,10 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
                     decodingMethod = "greedy_search",
                 )
                 Transcriber(OnlineRecognizer(config = config))
-            } catch (_: Throwable) { null }
+            } catch (t: Throwable) {
+                lastCreateError = "인식기 생성 실패: ${t::class.java.simpleName}: ${t.message}"
+                null
+            }
         }
 
         /**

@@ -340,23 +340,21 @@ object Theme {
      */
     fun rowActionButton(
         ctx: Context,
-        iconRes: Int,
         label: String,
         danger: Boolean = false,
         onClick: () -> Unit,
     ): TextView = TextView(ctx).apply {
-        val tint = if (danger) NEGATIVE else TEXT_MUTED
-        val d = ContextCompat.getDrawable(ctx, iconRes)?.mutate()
-        val px = ctx.dp(18f)
-        d?.setBounds(0, 0, px, px)
-        setCompoundDrawables(d, null, null, null)
-        TextViewCompat.setCompoundDrawableTintList(this, ColorStateList.valueOf(tint))
+        text = I18n.t(label)
+        isAllCaps = false
+        setTextColor(if (danger) NEGATIVE else TEXT_MUTED)
+        textSize = 12f                     // 5개를 균등 분할해도 '카테고리' 4자가 들어가는 크기
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        // 세로 패딩을 낮게 — 글자 알약(9dp)보다 납작하게 눌러 행이 덜 부해 보이게.
-        setPadding(0, ctx.dp(6f), 0, ctx.dp(6f))
+        maxLines = 1
+        // 세로 패딩을 낮게 — 기존 글자 알약(9dp)보다 납작하게 눌러 행이 덜 부해 보이게.
+        setPadding(ctx.dp(2f), ctx.dp(6f), ctx.dp(2f), ctx.dp(6f))
         background = pillBackground(ctx, SURFACE_ALT, null)
         isClickable = true
-        contentDescription = I18n.t(label)
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             .apply { setMargins(ctx.dp(3f), ctx.dp(2f), ctx.dp(3f), ctx.dp(2f)) }

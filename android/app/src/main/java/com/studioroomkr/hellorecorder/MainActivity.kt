@@ -2244,17 +2244,18 @@ class MainActivity : AppCompatActivity() {
         col.addView(top)
         col.addView(gauge)
 
-        // 아이콘 5개를 weight 로 균등 분할 — 폭·간격이 저절로 맞고 '삭제'까지 화면에 들어온다.
-        bottom.addView(Theme.rowActionButton(this, R.drawable.ic_share, "공유") { Share.shareFile(this, f) })
-        bottom.addView(Theme.rowActionButton(this, R.drawable.ic_label, "라벨") { showLabelDialog(key) })
-        bottom.addView(Theme.rowActionButton(this, R.drawable.ic_category, "카테고리") { showCategoryDialog(key) })
-        bottom.addView(Theme.rowActionButton(this, R.drawable.ic_edit, "편집") {
+        // 5개를 weight 로 균등 분할 — 폭·간격이 저절로 맞고 '삭제'까지 화면에 들어온다.
+        // (예전엔 글자 수대로 폭이 달라 간격이 들쭉날쭉했고 '삭제'가 화면 밖으로 잘려 나갔다.)
+        bottom.addView(Theme.rowActionButton(this, "공유") { Share.shareFile(this, f) })
+        bottom.addView(Theme.rowActionButton(this, "라벨") { showLabelDialog(key) })
+        bottom.addView(Theme.rowActionButton(this, "카테고리") { showCategoryDialog(key) })
+        bottom.addView(Theme.rowActionButton(this, "편집") {
             startActivity(
                 Intent(this@MainActivity, PlayerActivity::class.java)
                     .putExtra(PlayerActivity.EXTRA_PATH, f.absolutePath)
             )
         })
-        bottom.addView(Theme.rowActionButton(this, R.drawable.ic_delete, "삭제", danger = true) { confirmDelete(f, key) })
+        bottom.addView(Theme.rowActionButton(this, "삭제", danger = true) { confirmDelete(f, key) })
         col.addView(bottom)
         return col
     }
