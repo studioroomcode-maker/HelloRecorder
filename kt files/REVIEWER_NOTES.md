@@ -103,8 +103,11 @@ HelloRecorder는 사용자 본인의 회의·강의·인터뷰·메모를 녹음
 - [ ] **권한 선언**: RECORD_AUDIO 배경 사용에 대한 소명(위 권한 설명 활용).
 - [ ] **Data Safety 폼**: 녹음/전사는 기기 내 저장(수집 아님) — 온디바이스임을 정확히 표시.
       SDK 로 인한 기기 밖 통신(지도·모델·결제)은 각 항목대로 신고.
-- [ ] **개인정보처리방침 URL**: `privacy_policy.html` 을 공개 URL(GitHub Pages/노션 공개 등)로
-      게시하고 그 주소 입력.
+- [ ] **개인정보처리방침 URL**: `docs/privacy-policy.html` 을 GitHub Pages 로 게시하고 그 주소 입력.
+      - 저장소 Settings → Pages → Source: `main` 브랜치 `/docs` 폴더 → Save
+      - 게시 주소: `https://studioroomcode-maker.github.io/HelloRecorder/privacy-policy.html`
+      - `/docs` 소스는 그 폴더만 서빙하므로 저장소의 나머지가 새로 노출되지 않는다.
+      - ⚠️ 이 파일이 main 에 있어야 게시된다(v2 브랜치에만 있으면 404).
 - [ ] **콘텐츠 등급 설문**: 전체 이용가.
 - [ ] **타깃 대상**: 만 13세 이상, 아동 대상 아님.
 - [ ] (권장) **데모 영상**: Start 를 눌러 녹음 시작 → 상단 "녹음 중" 알림이 뜨는 30초 영상을

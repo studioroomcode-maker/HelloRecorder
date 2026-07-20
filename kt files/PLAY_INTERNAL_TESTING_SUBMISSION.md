@@ -79,8 +79,12 @@ cd android
 
 ### 2-5. 개인정보처리방침
 경로: **앱 콘텐츠 → 개인정보처리방침**
-- ⚠️ `PRIVACY_POLICY.md` 를 **공개 URL**(GitHub Pages/노션 공개/블로그)에 게시 후 그 주소 입력.
-  - ⚠️ 게시 전 **크래시 로그 1줄 추가** 권장: "앱 오류 진단 기록은 기기 내부에만 저장되며 외부로 전송되지 않습니다."
+- 게시본은 `docs/privacy-policy.html` (한/영 한 페이지). GitHub Pages 로 게시한다.
+  - 저장소 Settings → Pages → Source: `main` 브랜치 `/docs` 폴더 → Save
+  - 게시 주소: `https://studioroomcode-maker.github.io/HelloRecorder/privacy-policy.html`
+  - ⚠️ 파일이 **main 에 있어야** 게시된다(v2 브랜치에만 있으면 404 — PR #3 병합 필요).
+  - ✅ 크래시 로그 조항 추가 완료(2026-07-20) — `2. 라. 오류 진단 기록`. 기기 내부 저장·외부
+    전송 없음을 명시했고 Data Safety '수집 안 함' 답변과 어긋나지 않는다.
 
 ### 2-6. 광고
 - "앱에 광고가 있습니까?" → **아니요**.
