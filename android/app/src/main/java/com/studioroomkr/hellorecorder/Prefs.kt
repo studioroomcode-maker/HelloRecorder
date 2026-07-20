@@ -314,7 +314,9 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_APP_LOCK, on).apply()
     }
 
-    // ---- 프라이버시 모드 (화면 캡처 차단·최근앱 가림·알림 숨김) ----
+    // ---- 프라이버시 모드 (화면 캡처 차단·최근앱 가림) ----
+    // 알림은 숨기지 않는다 — '녹음 중' 알림은 어떤 설정에서도 항상 표시된다(감시앱으로 오인될
+    // 여지를 남기지 않기 위한 의도적 설계). 예전엔 이 모드가 알림도 가렸고 주석만 남아 있었다.
     fun isPrivacyMode(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_PRIVACY, false)
 

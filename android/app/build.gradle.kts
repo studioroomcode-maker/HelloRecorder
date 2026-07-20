@@ -84,6 +84,14 @@ android {
         // Play 출시는 App Bundle(.aab)로 기기별 분할 전달하면 사용자 다운로드는 더 작아진다.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            // 네이티브 심볼을 AAB 에 함께 올리는 설정. 다만 지금은 **실효가 거의 없다**:
+            // 이 앱의 .so 는 전부 AAR 프리빌트인데 6개 중 5개(libonnxruntime, sherpa 3종,
+            // libvad_jni)가 업스트림에서 이미 스트립돼 추출할 심볼 테이블이 없다. 실제로
+            // AAB 의 BUNDLE-METADATA 에 debugsymbols 항목이 생기지 않는 것을 확인했다(2026-07-20).
+            // → ONNX/sherpa 경로의 네이티브 크래시는 여전히 Play Console 에서 주소 덤프로만 보인다.
+            // 설정을 남겨 두는 이유: 업스트림이 심볼 포함 빌드를 내거나 자체 네이티브 코드를
+            // 추가하면 그때부터 자동으로 반영된다. 지금 당장의 개선으로 착각하지 말 것.
+            debugSymbolLevel = "SYMBOL_TABLE"
         }
     }
 
@@ -102,6 +110,15 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // 디버그 빌드는 BuildConfig.DEBUG 로 Pro 가 자동 해제된다(Pro.kt:49). 릴리스와
+            // 같은 applicationId 를 쓰면 흘러나간 디버그 APK 가 '완전 해제판'으로 설치될 수
+            // 있어 패키지를 분리한다. 서명키가 달라 Play 설치본을 덮어쓰지는 못했지만,
+            // 애초에 공존하게 두는 편이 안전하다.
+            // 부작용: 디버그 빌드에서는 Play 결제가 동작하지 않는다(패키지 불일치). 어차피
+            // 디버그는 Pro 가 자동 해제라 결제 경로를 타지 않으므로 실사용에 문제없다.
+            applicationIdSuffix = ".debug"
+        }
         release {
             optimization {
                 enable = false
