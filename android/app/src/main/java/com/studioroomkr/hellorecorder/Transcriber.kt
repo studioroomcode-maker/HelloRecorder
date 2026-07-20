@@ -151,7 +151,12 @@ class Transcriber private constructor(private val recognizer: OnlineRecognizer) 
                     ),
                     // 무음 경계에서 세그먼트를 끊는다(타임스탬프용). 규칙은 라이브러리 기본값.
                     enableEndpoint = true,
-                    decodingMethod = "greedy_search",
+                    // greedy 는 매 스텝 1등만 남겨 앞선 오인식을 되돌리지 못한다. 빔 탐색은
+                    // 후보를 여러 개 끌고 가며 뒤 문맥으로 고를 수 있어 한국어처럼 어미가
+                    // 뒤에 붙는 언어에서 특히 유리하다. 느려지지만 실측 RTF 0.035 라
+                    // 배치 전사에는 여유가 충분하다(충전 중에만 도는 작업이다).
+                    decodingMethod = "modified_beam_search",
+                    maxActivePaths = 4,
                 )
                 Transcriber(OnlineRecognizer(config = config))
             } catch (t: Throwable) {
