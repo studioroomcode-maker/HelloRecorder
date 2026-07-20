@@ -42,6 +42,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -57,6 +58,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startTimeText: TextView
     private lateinit var recordToggleBtn: Button
     private var lastToggleEnabled: Boolean? = null
+    // 알림 표시 가능 여부. updateStatus 가 300ms 마다 도는데 areNotificationsEnabled() 는
+    // 바인더 호출이라 매번 묻지 않고, 설정에서 바꾸고 돌아오는 경로(onResume)에서만 갱신한다.
+    private var notifEnabledCached = true
     private lateinit var contentRoot: View
     private var warningCard: View? = null
     private var warningText: TextView? = null
@@ -157,17 +161,55 @@ class MainActivity : AppCompatActivity() {
                 }
                 return@registerForActivityResult
             }
-            startRecording()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                result[Manifest.permission.POST_NOTIFICATIONS] == false
-            ) {
-                Toast.makeText(
-                    this,
-                    I18n.t("알림 권한이 없어 녹음 중 상태 알림이 표시되지 않습니다"),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+            // 알림이 꺼져 있으면 '녹음 중' 표시가 뜨지 않는다. 그 상태로 마이크만 켜지면
+            // 앱 쪽 녹음 표시가 하나도 없는 셈이라, 조용히 시작하지 않고 사용자에게 고른다.
+            if (notificationsEnabled()) startRecording() else confirmStartWithoutNotification()
         }
+
+    /**
+     * 알림 표시 가능 여부. 런타임 권한(13+)뿐 아니라 사용자가 설정에서 앱 알림을 끈 경우도
+     * 함께 잡아야 한다 — 권한만 보면 '허용했다가 나중에 끈' 경우를 놓친다.
+     */
+    private fun notificationsEnabled(): Boolean =
+        NotificationManagerCompat.from(this).areNotificationsEnabled()
+
+    /**
+     * 알림이 꺼진 상태에서의 녹음 시작 확인.
+     *
+     * 예전엔 토스트만 띄우고 바로 시작했다. 토스트는 몇 초 뒤 사라지므로, 그 뒤로는 마이크가
+     * 켜져 있다는 걸 앱 어디서도 알 수 없었다(시스템 마이크 표시만 남는다). 녹음 사실이 가려지는
+     * 건 이 앱이 가장 피해야 하는 상태라, 사용자가 명시적으로 고르게 한다.
+     * 취소하면 녹음을 시작하지 않는다.
+     */
+    private fun confirmStartWithoutNotification() {
+        AlertDialog.Builder(this)
+            .setTitle(I18n.t("알림이 꺼져 있습니다"))
+            .setMessage(
+                I18n.t(
+                    "알림이 꺼져 있어 '녹음 중' 표시가 나타나지 않습니다. " +
+                        "녹음 중인지 확인하기 어려우니 알림을 켜는 것을 권합니다."
+                )
+            )
+            .setPositiveButton(I18n.t("알림 켜기")) { _, _ -> openNotificationSettings() }
+            .setNeutralButton(I18n.t("이대로 녹음")) { _, _ -> startRecording() }
+            .setNegativeButton(I18n.t("취소"), null)
+            .show()
+    }
+
+    /** 이 앱의 시스템 알림 설정 화면. 실패하면 앱 상세 설정으로 떨어진다. */
+    private fun openNotificationSettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            )
+        } catch (_: Exception) {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.fromParts("package", packageName, null))
+            )
+        }
+    }
 
     private fun hasMicPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -2334,6 +2376,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 서비스가 도는데 알림이 꺼져 있으면 '녹음 중' 알림이 뜨지 않는다. 마이크가 켜진 사실이
+        // 앱 밖에서 보이지 않는 상태라, 앱 안에서만큼은 계속 드러내 둔다(위젯·부팅 재개로 시작한
+        // 경우나 시작한 뒤 설정에서 알림을 끈 경우도 여기서 잡힌다).
+        if (running && !notifEnabledCached) {
+            statusText.append(I18n.t("\n⚠ 알림 꺼짐 · '녹음 중' 알림이 표시되지 않습니다"))
+            statusText.setTextColor(Theme.NEGATIVE)
+        }
+
         // 시작/정지 토글 버튼: 실제로 도는 중이면 '정지'(빨강), 아니면 '시작'(키 컬러)
         if (::recordToggleBtn.isInitialized && lastToggleEnabled != running) {
             lastToggleEnabled = running
@@ -2422,6 +2472,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // 알림 설정 화면에 다녀왔을 수 있다 — 상태 줄 경고를 실제와 맞춘다.
+        notifEnabledCached = notificationsEnabled()
         // 잠금이 켜져 있고 아직 안 풀렸으면(최초 진입·백그라운드 복귀) 인증을 요구한다.
         // 인증 전에는 아래 레벨틱·배터리·Pro 갱신을 돌리지 않는다(내용 노출 방지).
         if (Prefs.isAppLockEnabled(this) && !unlocked) {

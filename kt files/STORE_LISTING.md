@@ -28,6 +28,14 @@ HelloRecorder는 회의, 강의, 인터뷰, 개인 메모 등 ‘내 일정과 �
 설정한 음량 기준 이상의 소리가 들릴 때만 녹음합니다. 조용한 구간은 건너뛰어 파일이 작고
 배터리 소모가 적습니다. 짧게 끊긴 구간을 한 파일로 묶어 정리할 수도 있습니다.
 
+■ 상황별 프리셋
+회의·강의·개인 메모·소음 감시 중 하나만 고르면 감도·음성 인식·구간 분리 기준이 한 번에
+맞춰집니다. 세부 설정은 언제든 직접 조절할 수 있습니다.
+
+■ 말한 내용으로 찾기 (온디바이스 음성 인식)
+녹음의 음성을 기기 안에서 텍스트로 옮겨, 검색창에 말한 내용을 입력하면 그 대목이 있는
+녹음과 위치를 바로 찾아 재생합니다. 음성 인식도 서버 없이 기기 안에서 처리됩니다.
+
 ■ 시간대·요일·날짜 예약
 요일별, 특정 날짜별로 녹음할 시간을 알람처럼 지정하세요. 원하는 시간에만 자동으로 동작합니다.
 
@@ -43,10 +51,11 @@ HelloRecorder는 회의, 강의, 인터뷰, 개인 메모 등 ‘내 일정과 �
 잘라내기(새 파일 저장 또는 덮어쓰기)도 지원합니다.
 
 ■ 내 기기에만 저장 · 개인정보 보호
-녹음 파일과 모든 설정은 기기 내부에만 저장되며, 어떤 데이터도 외부 서버로 전송하거나
-제3자와 공유하지 않습니다. 설정한 보관 기간이 지나면 자동으로 정리됩니다.
-‘프라이버시 모드’를 켜면 화면 캡처가 차단되고 최근 앱 목록에서도 화면이 가려집니다.
-앱 잠금(지문/PIN)으로 기록을 보호할 수 있습니다.
+녹음 파일·전사(받아쓰기) 결과·모든 설정은 기기 내부에만 저장되며, 개발자 서버로 업로드하지
+않습니다. (지도 표시, 음성 인식 모델 다운로드, 결제 등 선택 기능을 쓸 때만 해당 제3자
+서비스와 통신하며, 녹음 내용과 전사 결과는 전송되지 않습니다.) 설정한 보관 기간이 지나면
+자동으로 정리됩니다. ‘프라이버시 모드’를 켜면 화면 캡처가 차단되고 최근 앱 목록에서도 화면이
+가려집니다. 앱 잠금(지문/PIN)으로 기록을 보호할 수 있습니다.
 
 ■ 공유 · 백업
 필요한 파일만 골라 메일·드라이브·메신저 등으로 직접 공유하거나 백업할 수 있습니다.
@@ -83,6 +92,14 @@ files small and battery use low — and every recording stays on your device.
 Records only when sound rises above your chosen threshold. Quiet stretches are skipped, so
 files stay small and battery drain is minimal. Nearby segments can be merged into one file.
 
+■ Situation presets
+Pick Meeting, Lecture, Personal memo, or Noise watch, and sensitivity, voice detection, and
+splitting are set at once. You can still fine-tune any setting afterward.
+
+■ Search by what was said (on-device speech-to-text)
+Transcribes your recordings' speech on-device, so you can type what was said and jump straight
+to the recording and moment where it appears. Transcription runs on your device, no server.
+
 ■ Schedule by time, weekday, and date
 Set recording windows per weekday or for specific dates, like an alarm. It runs automatically
 only during the times you choose.
@@ -100,8 +117,10 @@ Scan a recording visually and jump to the exact moment you need. Includes playba
 bookmarks, and trimming (save as a new file or overwrite).
 
 ■ On-device & private
-Recordings and all settings are stored only on your device — nothing is sent to any server or
-shared with third parties. Old files are cleared automatically after your chosen retention
+Recordings, transcripts, and all settings are stored only on your device and are never uploaded
+to the developer's servers. (Optional features — map display, speech-model download, and
+payments — talk to those third-party services only when you use them; your recordings and
+transcripts are never sent.) Old files are cleared automatically after your chosen retention
 period. Turn on Privacy Mode to block screenshots and hide the screen in Recents. Protect your
 library with an app lock (fingerprint/PIN).
 
