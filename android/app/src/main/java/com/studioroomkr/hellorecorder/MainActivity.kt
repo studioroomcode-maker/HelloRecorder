@@ -43,6 +43,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.NotificationManagerCompat
+import androidx.work.WorkInfo
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -61,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     // 알림 표시 가능 여부. updateStatus 가 300ms 마다 도는데 areNotificationsEnabled() 는
     // 바인더 호출이라 매번 묻지 않고, 설정에서 바꾸고 돌아오는 경로(onResume)에서만 갱신한다.
     private var notifEnabledCached = true
+    // 디버그 '지금 전사' 완료 구독을 한 번만 걸기 위한 플래그(설정 화면을 다시 그려도 중복 방지).
+    private var transcribeNowObserved = false
     private lateinit var contentRoot: View
     private var warningCard: View? = null
     private var warningText: TextView? = null
@@ -744,6 +747,9 @@ class MainActivity : AppCompatActivity() {
             when {
                 Transcriber.isModelAvailable(this) -> {
                     c.addView(Theme.hint(this, I18n.f("녹음을 기기 안에서 텍스트로 바꿔 나중에 말로 찾을 수 있게 합니다(외부 전송 없음). 충전 중 + 배터리 여유일 때만 돌아 배터리를 쓰지 않습니다. 지금까지 전사된 파일: %d개", TranscriptStore.indexedFileCount(this))))
+                    // 개발 확인용 — 정규 경로는 '충전 중 + 2시간 주기'라 실기기에서 지금 당장
+                    // 돌려보기가 어렵다. 릴리스 빌드에는 나오지 않는다.
+                    if (BuildConfig.DEBUG) c.addView(debugTranscribeNowButton())
                 }
                 SttModel.isDownloading(this) -> {
                     c.addView(Theme.hint(this, I18n.f("음성 인식 모델 다운로드 중… %d%% (진행률은 알림에서도 보여요). 완료되면 자동으로 설치됩니다.", SttModel.progressPercent(this))))
@@ -2493,6 +2499,46 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** STT 모델 다운로드 확인 다이얼로그 — 네트워크(Wi-Fi 전용/모바일 허용) 선택. */
+    /**
+     * 디버그 전용 '지금 전사' 버튼.
+     *
+     * 정규 경로는 '충전 중 + 배터리 여유 + 2시간 주기'라 실기기에서 지금 당장 확인하기 어렵다.
+     * 이 버튼은 제약만 빼고 같은 워커를 1회 돌린다(워커 안의 Pro·설정·모델 게이트는 그대로).
+     *
+     * 게이트에 걸리면 워커가 조용히 통과해 버려서 "눌렀는데 아무 일도 안 일어난" 것처럼 보인다.
+     * 그래서 누르기 전에 먼저 확인하고 걸린 이유를 알려준다.
+     */
+    private fun debugTranscribeNowButton(): View {
+        val btn = Theme.outlineButton(this, "지금 전사 (디버그)") {
+            val blocked = when {
+                !Pro.isPro -> "Pro 가 아니라 전사가 돌지 않습니다"
+                !Prefs.isTranscribeEnabled(this) -> "‘자동 전사’ 를 먼저 켜세요"
+                !Transcriber.isModelAvailable(this) -> "음성 인식 모델이 아직 없습니다"
+                else -> null
+            }
+            if (blocked != null) {
+                Toast.makeText(this, blocked, Toast.LENGTH_LONG).show()
+            } else {
+                TranscribeWorker.runNow(this)
+                Toast.makeText(this, "전사를 시작했습니다 (최대 8분)", Toast.LENGTH_SHORT).show()
+            }
+        }
+        // 완료를 한 번만 구독한다 — 버튼을 누를 때마다 등록하면 옵저버가 쌓인다.
+        if (!transcribeNowObserved) {
+            transcribeNowObserved = true
+            TranscribeWorker.observeRunNow(this).observe(this) { infos ->
+                if (infos.any { it.state == WorkInfo.State.SUCCEEDED }) {
+                    Toast.makeText(
+                        this,
+                        "전사 완료 — 전사된 파일 ${TranscriptStore.indexedFileCount(this)}개",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+        return btn
+    }
+
     private fun showSttDownloadDialog() {
         AlertDialog.Builder(this)
             .setTitle(I18n.t("음성 인식 모델 다운로드"))

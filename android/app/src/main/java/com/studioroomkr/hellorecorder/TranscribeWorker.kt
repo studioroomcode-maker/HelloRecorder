@@ -2,10 +2,14 @@ package com.studioroomkr.hellorecorder
 
 import android.content.Context
 import android.os.SystemClock
+import androidx.lifecycle.LiveData
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.WorkInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
@@ -64,6 +68,7 @@ class TranscribeWorker(
 
     companion object {
         private const val WORK_NAME = "auto_transcribe"
+        private const val WORK_NAME_NOW = "auto_transcribe_now"   // 디버그 즉시 실행(주기 작업과 분리)
         // 회당 처리 예산. WorkManager 의 작업 실행 한도(10분) 안에서 여유를 둔다.
         private const val BUDGET_MS = 8 * 60 * 1000L
         // 최근 수정 가드 — 아직 이어서 녹음 중일 수 있는 파일 제외 (빈 파일 정리 가드와 동일 취지)
@@ -86,5 +91,26 @@ class TranscribeWorker(
                 request
             )
         }
+
+        /**
+         * 즉시 1회 실행 — 개발 중 확인용(디버그 빌드에서만 노출).
+         *
+         * 정규 경로는 '충전 중 + 배터리 여유 + 2시간 주기'라 실기기에서 지금 당장 확인하기가
+         * 어렵다. 그래서 **제약만 빼고** 같은 워커를 한 번 돌린다. 워커 본체의 게이트
+         * (Pro·설정 토글·모델 존재)는 그대로 지나므로 확인하는 경로가 실제 경로와 같다.
+         *
+         * 정규 주기 작업과 이름을 분리해, 이 실행이 다음 주기 스케줄을 흔들지 않게 한다.
+         */
+        fun runNow(context: Context) {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                WORK_NAME_NOW,
+                ExistingWorkPolicy.REPLACE,
+                OneTimeWorkRequestBuilder<TranscribeWorker>().build()
+            )
+        }
+
+        /** runNow() 의 진행 상태. 디버그 화면이 완료를 알리는 데 쓴다. */
+        fun observeRunNow(context: Context): LiveData<List<WorkInfo>> =
+            WorkManager.getInstance(context).getWorkInfosForUniqueWorkLiveData(WORK_NAME_NOW)
     }
 }
