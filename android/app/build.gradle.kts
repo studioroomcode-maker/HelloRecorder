@@ -139,6 +139,7 @@ android {
 
     buildFeatures {
         buildConfig = true   // BuildConfig.DEBUG 사용 (디버그 빌드 자동 Pro)
+        resValues = true     // 변형별 app_name (디버그는 이름을 달리해 런처에서 구분)
     }
     signingConfigs {
         // 설정이 온전할 때만 release 서명 설정을 만든다(값이 비었거나 CHANGEME 면 만들지 않는다).
@@ -160,8 +161,12 @@ android {
             // 부작용: 디버그 빌드에서는 Play 결제가 동작하지 않는다(패키지 불일치). 어차피
             // 디버그는 Pro 가 자동 해제라 결제 경로를 타지 않으므로 실사용에 문제없다.
             applicationIdSuffix = ".debug"
+            // 패키지가 갈리면서 런처에 아이콘이 둘 생기는데, 이름까지 같으면 어느 쪽이
+            // 디버그인지 알 수 없다(실제로 "전사 설치하면 앱이 하나 더 생긴다"로 오해했다).
+            resValue("string", "app_name", "HelloRecorder 디버그")
         }
         release {
+            resValue("string", "app_name", "HelloRecorder")
             optimization {
                 enable = false
             }
