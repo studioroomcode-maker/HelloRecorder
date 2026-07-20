@@ -7,7 +7,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * STT 모델(한국어 Zipformer int8, 총 ~133MB) 인앱 다운로드 관리.
+ * STT 모델(한국어 Zipformer int8, 총 ~76MB) 인앱 다운로드 관리.
  *
  *  - 소스: 허깅페이스 공식 k2-fsa 저장소에서 int8 파일 4개를 개별 다운로드
  *    (아카이브가 아니라 압축 해제 코드가 필요 없고, fp32 등 불필요한 285MB 를 받지 않는다).
@@ -18,8 +18,15 @@ import java.security.MessageDigest
  */
 object SttModel {
 
+    // 오프라인(비스트리밍) 한국어 zipformer — KsponSpeech 학습.
+    //
+    // 예전엔 streaming-zipformer 를 썼는데, 스트리밍 모델은 "지금까지 들은 것"만으로 즉시
+    // 답을 내야 해서 뒤 문맥을 못 본다. 실시간 자막엔 필수지만 이 앱의 전사는 이미 다 녹음된
+    // 파일을 충전 중에 배치로 처리하는 작업이라, 그 정확도 손해를 감수할 이유가 없었다.
+    // 오프라인 모델은 발화 전체를 보고 결정한다 → 더 정확하고, 덤으로 encoder 가 더 작다
+    // (127MB → 70.8MB, 총 다운로드 133MB → 76MB).
     private const val BASE =
-        "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/main/"
+        "https://huggingface.co/k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24/resolve/main/"
     /**
      * 받을 파일 + 무결성 기준(크기·SHA-256). DownloadManager 의 "성공"은 HTTP 전송 완료를
      * 뜻할 뿐, 내용이 올바른지는 보장하지 않는다(프록시 에러페이지·잘린 파일·저장소 교체본이
@@ -28,16 +35,17 @@ object SttModel {
      */
     private data class ModelFile(val name: String, val size: Long, val sha256: String)
     private val FILES = listOf(
-        ModelFile("encoder-epoch-99-avg-1.int8.onnx", 126_968_852,
-            "8d0b1aa24fbedd4e3948564ab7facd151b8ce9b0c48fc987c541de2de3af5697"),
+        ModelFile("encoder-epoch-99-avg-1.int8.onnx", 70_784_728,
+            "8b196d723421a0513c98ec25da2c43420c029e817f5e4a90b29ff80291c0af2b"),
         ModelFile("decoder-epoch-99-avg-1.int8.onnx", 2_844_692,
-            "68ea197936aabd249f38b53a87c775422bca64428ad4427d0e6e8092593e71fb"),
+            "2cc8c04ea080a657c18ebc59702e6b049cef08163eba5d68ac5bf707925cb0fb"),
         ModelFile("joiner-epoch-99-avg-1.int8.onnx", 2_581_421,
-            "128b80a66a1f718488af8560f9d15895109b99ff3e573f0a0130e03774ef1ced"),
+            "eb654db1ea2cc9d63474855f65958b6059084692a9f2eb4f3812aceb1e416a20"),
+        // 스트리밍 모델과 내용이 완전히 같다(같은 KsponSpeech BPE 사전) — 해시 실측 확인.
         ModelFile("tokens.txt", 60_246,
             "016bdf0965029263b7ad01b742366ee542ef0bef38261510e8176ff6f2e9e668"),
     )
-    const val TOTAL_MB = 133
+    const val TOTAL_MB = 76
     private const val TMP_SUBDIR = "stt-model-tmp"
 
     fun isAvailable(ctx: Context): Boolean = Transcriber.isModelAvailable(ctx)
@@ -139,12 +147,18 @@ object SttModel {
 
         // 검증 통과 → tmp 에서 정식 폴더로 이동(같은 볼륨이라 rename 원자적)
         val dst = Transcriber.modelDir(ctx).apply { mkdirs() }
+        // 옛 모델(streaming)과 파일명이 같으므로, 옮기기 전에 표식을 지워 중간에 실패해도
+        // 두 모델이 섞인 폴더가 '사용 가능'으로 보이지 않게 한다.
+        Transcriber.modelIdFile(ctx).delete()
         var ok = true
         for (mf in FILES) {
             val out = File(dst, mf.name)
             if (out.exists()) out.delete()
             if (!File(tmp, mf.name).renameTo(out)) { ok = false; break }
         }
+        // 전부 옮겨진 뒤에만 표식을 남긴다 — 이게 있어야 findModel 이 통과시킨다.
+        if (ok) runCatching { Transcriber.modelIdFile(ctx).writeText(Transcriber.MODEL_ID) }
+            .onFailure { ok = false }
         Prefs.setSttDownloadIds(ctx, emptyList())
         cleanupTmp(ctx)
         if (!ok) {

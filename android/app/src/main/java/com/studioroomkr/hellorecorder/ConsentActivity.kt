@@ -85,7 +85,7 @@ class ConsentActivity : AppCompatActivity() {
             네트워크 통신 (선택 기능을 쓸 때만)
             녹음 내용이 나가는 것은 아니지만, 아래 기능은 제3자 서비스와 통신합니다.
             • 지도로 장소 지정: OpenStreetMap 에서 지도 타일을 받아옵니다(보고 있는 지도 영역이 전달됩니다).
-            • 말한 내용 검색용 STT 모델 내려받기: Hugging Face 에서 모델 파일(약 133MB)을 받습니다.
+            • 말한 내용 검색용 STT 모델 내려받기: Hugging Face 에서 모델 파일(약 76MB)을 받습니다.
             • Pro 구매·복원: Google Play 결제를 이용합니다.
 
             중요 — 법적 책임
@@ -107,7 +107,7 @@ class ConsentActivity : AppCompatActivity() {
             Network use (only for the optional features below)
             Your recordings never leave the device, but these features do talk to third-party services.
             • Picking a place on the map: map tiles are fetched from OpenStreetMap (the map area you're viewing is sent).
-            • Downloading the speech-search model: the model file (~133MB) is fetched from Hugging Face.
+            • Downloading the speech-search model: the model file (~76MB) is fetched from Hugging Face.
             • Buying or restoring Pro: handled by Google Play billing.
 
             Important — Legal responsibility
