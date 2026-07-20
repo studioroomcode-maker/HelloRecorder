@@ -12,6 +12,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.work.WorkInfo
 import java.io.File
 
 /**
@@ -45,6 +46,51 @@ class PlayerActivity : AppCompatActivity() {
             timeText.text = "${fmt(pos)} / ${fmt(dur)}"
             playBtn.text = if (Player.isPlaying(file)) I18n.t("⏸ 정지") else I18n.t("▶ 재생")
             handler.postDelayed(this, 300)
+        }
+    }
+
+    /**
+     * 전사문이 없을 때 뜨는 '이 녹음 전사하기' 영역.
+     *
+     * 정규 배치(TranscribeWorker)는 '충전 중 + 배터리 여유 + 2시간 주기'라, 방금 녹음한 것을
+     * 지금 검색하고 싶어도 방법이 없었다. 여기서 1건만 즉시 처리한다 — 사용자가 콕 집어
+     * 요청한 것이라 배터리 절약 원칙과 부딪히지 않는다.
+     *
+     * Pro·모델이 없으면 버튼 대신 이유를 적는다. 버튼을 눌렀는데 조용히 아무 일도 없는 게
+     * 제일 나쁘다.
+     */
+    private fun transcribeNowSection(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(Theme.sectionTitle(this@PlayerActivity, "전사문"))
+        when {
+            !Pro.isPro ->
+                addView(Theme.hint(this@PlayerActivity, "말한 내용으로 찾기(자동 전사)는 Pro 전용입니다."))
+            !Transcriber.isModelAvailable(this@PlayerActivity) ->
+                addView(Theme.hint(this@PlayerActivity, "음성 인식 모델이 아직 없습니다. 설정 → 녹음 감도에서 모델을 먼저 받아 주세요."))
+            else -> {
+                val status = Theme.hint(this@PlayerActivity, "이 녹음은 아직 전사되지 않았습니다. 지금 만들면 말한 내용으로 찾을 수 있어요.")
+                addView(status)
+                val btn = Theme.secondaryButton(this@PlayerActivity, "이 녹음 전사하기") {}
+                btn.setOnClickListener {
+                    btn.isEnabled = false
+                    btn.text = I18n.t("전사 중…")
+                    status.text = I18n.t("기기 안에서 처리 중입니다. 녹음 길이에 따라 몇 초~몇 분 걸립니다.")
+                    TranscribeWorker.runOne(this@PlayerActivity, file)
+                }
+                addView(btn)
+                // 끝나면 화면을 다시 그려 전사문이 실제로 보이게 한다.
+                TranscribeWorker.observeOne(this@PlayerActivity, file).observe(this@PlayerActivity) { infos ->
+                    if (infos.any { it.state == WorkInfo.State.SUCCEEDED } && !isFinishing) {
+                        if (TranscriptStore.readSidecar(file)?.segments?.isNotEmpty() == true) {
+                            recreate()
+                        } else {
+                            btn.isEnabled = true
+                            btn.text = I18n.t("이 녹음 전사하기")
+                            status.text = I18n.t("전사할 말소리를 찾지 못했습니다. 조용한 녹음일 수 있어요.")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -126,6 +172,11 @@ class PlayerActivity : AppCompatActivity() {
         })
         root.addView(voiceRow)
         loadVoiceOnsets()
+
+        // 전사문이 아직 없으면 이 자리에서 바로 만들 수 있게 한다. 정규 배치는 '충전 중 +
+        // 2시간 주기'라, 방금 녹음한 것을 지금 찾고 싶은 흐름이 통째로 막혀 있었다.
+        val hasTranscript = TranscriptStore.readSidecar(file)?.segments?.isNotEmpty() == true
+        if (!hasTranscript) root.addView(transcribeNowSection())
 
         // 전사문 (자동 전사 사이드카가 있을 때만) — 문장을 탭하면 그 위치로 이동
         TranscriptStore.readSidecar(file)?.let { t ->
