@@ -64,46 +64,8 @@ val sherpaAar: Configuration by configurations.creating {
     isCanBeResolved = true
 }
 
-/**
- * sherpa AAR 안의 libonnxruntime.so 만 뽑아 jniLibs 레이아웃(<abi>/lib.so)으로 펼친다.
- * 저장소에 25MB 바이너리를 넣지 않으려고 빌드 시점에 AAR 에서 꺼낸다.
- */
-abstract class ExtractSherpaOrtTask : DefaultTask() {
-    @get:InputFiles abstract val aar: ConfigurableFileCollection
-    @get:OutputDirectory abstract val outputDir: DirectoryProperty
-
-    @get:Inject abstract val archives: ArchiveOperations
-    @get:Inject abstract val fs: FileSystemOperations
-
-    @TaskAction
-    fun extract() {
-        fs.copy {
-            from(archives.zipTree(aar.singleFile)) {
-                include("jni/**/libonnxruntime.so")
-                eachFile { path = path.removePrefix("jni/") }   // jni/arm64-v8a/x.so → arm64-v8a/x.so
-            }
-            into(outputDir)
-            includeEmptyDirs = false
-        }
-    }
-}
-
-val extractSherpaOrt = tasks.register<ExtractSherpaOrtTask>("extractSherpaOrt") {
-    description = "sherpa AAR 에서 libonnxruntime.so 추출(Microsoft 것 대신 이게 패키징되도록)"
-    // 이름으로 거는 이유: verifySherpaAar 는 이 파일 아래쪽에서 등록된다(문자열이면 지연 해석).
-    dependsOn("verifySherpaAar")   // 체크섬 확인을 통과한 AAR 만 푼다
-    aar.from(sherpaAar)
-}
-
-// AGP 9 는 SourceSet API 에 Provider 를 못 넣게 한다(생성물인지 정적 파일인지 구분 불가).
-// 생성 디렉터리는 Variant API 로 붙인다.
-androidComponents {
-    onVariants { variant ->
-        variant.sources.jniLibs?.addGeneratedSourceDirectory(
-            extractSherpaOrt, ExtractSherpaOrtTask::outputDir
-        )
-    }
-}
+// (이전에 있던 ExtractSherpaOrtTask 는 제거했다 — Microsoft ORT 를 걷어내면서
+//  libonnxruntime.so 공급자가 sherpa AAR 하나뿐이 되어, 골라낼 중복 자체가 없어졌다.)
 
 android {
     namespace = "com.studioroomkr.hellorecorder"
@@ -180,23 +142,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    // sherpa-onnx(STT) AAR 과 com.microsoft.onnxruntime:onnxruntime-android 가 **같은 이름**의
-    // libonnxruntime.so 를 각각 담고 있어 하나만 패키징해야 한다.
+    // libonnxruntime.so 는 이제 sherpa AAR 것 하나뿐이다(Microsoft 의존성 제거).
     //
-    // 예전 주석은 "둘 다 onnxruntime 빌드라 호환"이라며 pickFirst 에 맡겼는데, 그 가정이 틀렸다.
-    // 실제로 Microsoft 빌드(18,214,224 B)가 선택됐고 sherpa JNI 는 자기 빌드(25,831,632 B)에만
-    // 링크되므로 기기에서 이렇게 죽었다:
-    //   dlopen failed: cannot locate symbol "OrtGetApiBase" referenced by "libsherpa-onnx-jni.so"
-    //   → OnlineRecognizer.<clinit> 실패 → NoClassDefFoundError → STT 가 통째로 동작 불능.
-    // 컴파일은 통과하고 .so 도 APK 에 다 들어 있어서, 실기기에서 돌려보기 전까지 드러나지 않았다.
-    //
-    // 그래서 sherpa 의 libonnxruntime.so 를 생성 jniLibs 디렉터리로 꺼내 우선순위를 확정한다
-    // (위 androidComponents 블록). pickFirst 는 남은 중복을 걷어내는 용도로만 남긴다.
-    packaging {
-        jniLibs {
-            pickFirsts += "**/libonnxruntime.so"
-        }
-    }
+    // 이력: 예전엔 sherpa 와 Microsoft 두 AAR 이 **같은 이름**의 libonnxruntime.so 를 담고 있어
+    // pickFirst 로 하나를 골랐는데, 둘은 ELF 심볼 버전 노드가 서로 달라(VERS_1.24.3 vs
+    // VERS_1.22.0) 어느 쪽을 고르든 반대쪽이 dlopen 에 실패했다. Microsoft 것이 골렸을 땐 STT 가,
+    // sherpa 것으로 바꾸니 목소리 강조가 죽었다 — 둘 다 예외를 삼켜 조용히 꺼져 있었다.
+    // GTCRN 을 sherpa 내장 denoiser 로 옮겨 런타임을 하나로 통일하면서 충돌이 사라졌다.
 }
 
 dependencies {
@@ -216,8 +168,20 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     implementation("com.android.billingclient:billing:8.0.0")  // Pro 인앱결제
     implementation("com.github.gkonovalov.android-vad:webrtc:2.0.10")  // WebRTC 음성활동검출(VAD) — 1차 게이트
-    implementation("com.github.gkonovalov.android-vad:silero:2.0.10")   // Silero VAD(ONNX) — 2차 정밀 확인
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")  // GTCRN 음성향상 직접 추론
+    // Silero VAD(ONNX) — 2차 정밀 확인.
+    // ⚠️ 이 라이브러리는 com.microsoft.onnxruntime:onnxruntime-android 를 전이로 끌고 오는데,
+    // 그게 들어오면 sherpa 와 libonnxruntime.so 가 충돌한다(심볼 버전 노드 VERS_1.22.0 vs
+    // VERS_1.24.3 — 둘 중 하나는 반드시 dlopen 에 실패). 그래서 제외한다.
+    // 결과: VadSilero 는 초기화에 실패하고 isSpeechSilero() 가 null 을 돌려주며,
+    // AudioEngine 은 WebRTC 1차 판정만으로 폴백한다(catch(Throwable) 로 감싸져 있어 안전).
+    // → '정밀 음성 확인(Silero)' 은 현재 실질적으로 꺼진 상태다. sherpa 내장 Vad 로 옮기는 게
+    //   후속 과제다(sherpa 에 SileroVadModelConfig 가 있다).
+    implementation("com.github.gkonovalov.android-vad:silero:2.0.10") {
+        exclude(group = "com.microsoft.onnxruntime", module = "onnxruntime-android")
+    }
+    // com.microsoft.onnxruntime:onnxruntime-android 제거(2026-07-20).
+    // GTCRN 음성향상을 sherpa 내장 denoiser 로 옮기면서 필요 없어졌다. 남겨두면 같은 이름의
+    // libonnxruntime.so 가 둘이 되어 심볼 버전 노드가 충돌한다(자세한 경위는 SpeechEnhancer.kt).
 
     // sherpa-onnx: 온디바이스 한국어 STT(자동 전사 — v2 핵심 기능). 실기기 실측으로 확정
     // (S25U: RTF 0.035, 근접 CER≈0%). AAR 이 ABI당 ~14MB 라 릴리스 크기가 늘지만
