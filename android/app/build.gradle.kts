@@ -1,6 +1,7 @@
 import java.util.Properties
 import java.io.FileInputStream
 import java.security.MessageDigest
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
@@ -61,6 +62,47 @@ val SHERPA_SHA256 = "243ad797a3b6e75ebbeaf7a2ab4aec0777e7d71b730685abb762a120940
 val sherpaAar: Configuration by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
+}
+
+/**
+ * sherpa AAR 안의 libonnxruntime.so 만 뽑아 jniLibs 레이아웃(<abi>/lib.so)으로 펼친다.
+ * 저장소에 25MB 바이너리를 넣지 않으려고 빌드 시점에 AAR 에서 꺼낸다.
+ */
+abstract class ExtractSherpaOrtTask : DefaultTask() {
+    @get:InputFiles abstract val aar: ConfigurableFileCollection
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+
+    @get:Inject abstract val archives: ArchiveOperations
+    @get:Inject abstract val fs: FileSystemOperations
+
+    @TaskAction
+    fun extract() {
+        fs.copy {
+            from(archives.zipTree(aar.singleFile)) {
+                include("jni/**/libonnxruntime.so")
+                eachFile { path = path.removePrefix("jni/") }   // jni/arm64-v8a/x.so → arm64-v8a/x.so
+            }
+            into(outputDir)
+            includeEmptyDirs = false
+        }
+    }
+}
+
+val extractSherpaOrt = tasks.register<ExtractSherpaOrtTask>("extractSherpaOrt") {
+    description = "sherpa AAR 에서 libonnxruntime.so 추출(Microsoft 것 대신 이게 패키징되도록)"
+    // 이름으로 거는 이유: verifySherpaAar 는 이 파일 아래쪽에서 등록된다(문자열이면 지연 해석).
+    dependsOn("verifySherpaAar")   // 체크섬 확인을 통과한 AAR 만 푼다
+    aar.from(sherpaAar)
+}
+
+// AGP 9 는 SourceSet API 에 Provider 를 못 넣게 한다(생성물인지 정적 파일인지 구분 불가).
+// 생성 디렉터리는 Variant API 로 붙인다.
+androidComponents {
+    onVariants { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(
+            extractSherpaOrt, ExtractSherpaOrtTask::outputDir
+        )
+    }
 }
 
 android {
@@ -133,9 +175,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    // sherpa-onnx(STT) AAR 이 자체 libonnxruntime.so 를 번들하는데, 앱은 이미
-    // com.microsoft.onnxruntime:onnxruntime-android 의 libonnxruntime.so 를 쓴다 → 중복.
-    // pickFirst 로 하나만 패키징(둘 다 onnxruntime 빌드라 호환).
+    // sherpa-onnx(STT) AAR 과 com.microsoft.onnxruntime:onnxruntime-android 가 **같은 이름**의
+    // libonnxruntime.so 를 각각 담고 있어 하나만 패키징해야 한다.
+    //
+    // 예전 주석은 "둘 다 onnxruntime 빌드라 호환"이라며 pickFirst 에 맡겼는데, 그 가정이 틀렸다.
+    // 실제로 Microsoft 빌드(18,214,224 B)가 선택됐고 sherpa JNI 는 자기 빌드(25,831,632 B)에만
+    // 링크되므로 기기에서 이렇게 죽었다:
+    //   dlopen failed: cannot locate symbol "OrtGetApiBase" referenced by "libsherpa-onnx-jni.so"
+    //   → OnlineRecognizer.<clinit> 실패 → NoClassDefFoundError → STT 가 통째로 동작 불능.
+    // 컴파일은 통과하고 .so 도 APK 에 다 들어 있어서, 실기기에서 돌려보기 전까지 드러나지 않았다.
+    //
+    // 그래서 sherpa 의 libonnxruntime.so 를 생성 jniLibs 디렉터리로 꺼내 우선순위를 확정한다
+    // (위 androidComponents 블록). pickFirst 는 남은 중복을 걷어내는 용도로만 남긴다.
     packaging {
         jniLibs {
             pickFirsts += "**/libonnxruntime.so"
