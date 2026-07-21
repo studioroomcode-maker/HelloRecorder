@@ -599,6 +599,18 @@ class MainActivity : AppCompatActivity() {
         c.addView(btnRow)
         c.addView(Theme.hint(this, "녹음 내용·위치 좌표는 포함되지 않습니다. 기기·설정·개수만 담겨, 문제 신고 시 붙여 넣기 좋습니다."))
 
+        // 음성 엔진 실제 로드 점검 — ONNX 인식기를 실제로 만들어 보므로 무겁다. 그래서
+        // 위 진단(가벼운 설정 요약)과 분리해, 버튼을 눌렀을 때만 백그라운드에서 돌린다.
+        val engineOut = Theme.hint(this, "‘목소리 강조’·전사 엔진이 실제로 로드되는지 확인합니다(설정만 켜져도 네이티브 로드에 실패할 수 있습니다).")
+        c.addView(engineOut)
+        c.addView(Theme.smallButton(this, "음성 엔진 점검") {
+            engineOut.text = I18n.t("점검 중…")
+            Thread {
+                val text = try { Diagnostics.engineReport(this) } catch (e: Throwable) { "점검 실패: ${e.message}" }
+                runOnUiThread { if (!isFinishing) engineOut.text = text }
+            }.apply { isDaemon = true }.start()
+        })
+
         // ── 측정 로깅(실측용) ──
         c.addView(Theme.divider(this).apply {
             (layoutParams as? LinearLayout.LayoutParams)?.setMargins(0, dp(12), 0, dp(8))

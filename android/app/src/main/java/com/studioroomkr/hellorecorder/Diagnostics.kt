@@ -69,11 +69,6 @@ object Diagnostics {
         sb.appendLine("- 검색 인덱스 파일 수: ${indexedCount(ctx)}")
         sb.appendLine()
 
-        sb.appendLine("[음성 엔진 실제 로드]")
-        sb.appendLine("- 목소리 강조(GTCRN): ${enhancerStatus(ctx)}")
-        sb.appendLine("- 전사기(STT): ${transcriberStatus(ctx)}")
-        sb.appendLine()
-
         sb.appendLine("[신뢰성]")
         sb.appendLine("- 인코딩 실패 누적: ${Prefs.getEncodeFailCount(ctx)}")
         sb.appendLine("- 저장된 크래시 로그: ${CrashLogger.count(ctx)}개")
@@ -81,12 +76,21 @@ object Diagnostics {
     }
 
     /**
-     * 설정이 '켜짐'인 것과 엔진이 실제로 뜨는 것은 다르다.
+     * 음성 엔진이 실제로 뜨는지 한 번 만들어 보고 결과를 적는다. 실패면 이유까지.
      *
-     * 실제로 두 기능이 네이티브 로드 실패로 조용히 꺼진 채 한참 굴러간 적이 있다
-     * (libonnxruntime.so 심볼 버전 충돌). 설정값만 찍는 진단으로는 그걸 잡을 수 없었다.
-     * 그래서 여기서 한 번 만들어 보고 결과를 적는다 — 실패면 이유까지 남긴다.
+     * ⚠️ report() 와 분리한 이유: 이 점검은 ONNX 인식기를 실제로 **생성**하므로 무겁다
+     * (STT 모델은 로드에 수백 ms + 네이티브 힙). report() 는 앱 시작 시 설정 화면을 그리며
+     * 즉시 호출되는데, 거기에 이 무거운 초기화를 끼워 넣었다가 앱 시작이 막혔다.
+     * 그래서 사용자가 '음성 엔진 점검' 버튼을 누를 때만, 백그라운드 스레드에서 돌린다.
      */
+    fun engineReport(ctx: Context): String {
+        val sb = StringBuilder()
+        sb.appendLine("[음성 엔진 실제 로드]")
+        sb.appendLine("- 목소리 강조(GTCRN): ${enhancerStatus(ctx)}")
+        sb.appendLine("- 전사기(STT): ${transcriberStatus(ctx)}")
+        return sb.toString()
+    }
+
     private fun enhancerStatus(ctx: Context): String {
         val e = SpeechEnhancer.create(ctx)
         return if (e != null) {
