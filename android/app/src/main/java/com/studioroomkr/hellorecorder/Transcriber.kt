@@ -9,7 +9,7 @@ import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
-import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import java.io.File
 import java.nio.ByteOrder
 
@@ -115,10 +115,10 @@ class Transcriber private constructor(private val recognizer: OfflineRecognizer)
     companion object {
         private const val SAMPLE_RATE = 16_000
 
-        // 한 번에 인식기에 넣는 최대 길이(30초 @16kHz). 파일이 아무리 길어도 메모리는
-        // 이 버퍼 하나(약 1.9MB)로 고정된다. 오프라인 모델은 넣은 만큼을 통째로 들고
-        // 추론하므로 이 상한이 곧 메모리 상한이다.
-        private const val SEG_MAX = 30 * SAMPLE_RATE
+        // 한 번에 인식기에 넣는 최대 길이. Whisper 는 30초를 넘으면 초과분을 조용히 버리므로
+        // 반드시 그 아래여야 한다 — 25초로 여유를 둔다. 파일이 아무리 길어도 메모리는 이
+        // 버퍼 하나(약 1.6MB)로 고정된다.
+        private const val SEG_MAX = 25 * SAMPLE_RATE
         // 이보다 짧으면 무음이 와도 끊지 않는다 — 한두 음절만 담긴 조각은 인식률이 나쁘다.
         private const val SEG_MIN_MS = 1_000L
         // 이만큼 조용하면 문장이 끝난 것으로 보고 끊는다.
@@ -128,20 +128,20 @@ class Transcriber private constructor(private val recognizer: OfflineRecognizer)
 
         fun modelDir(ctx: Context): File = File(ctx.getExternalFilesDir(null), "stt-model")
 
-        data class Model(val encoder: File, val decoder: File, val joiner: File, val tokens: File)
+        // Whisper 는 encoder+decoder 만 쓴다(transducer 의 joiner 가 없다).
+        data class Model(val encoder: File, val decoder: File, val tokens: File)
 
         /**
          * 설치된 모델이 이 코드가 기대하는 그 모델인지 표시하는 파일.
          *
-         * 오프라인 모델과 예전 streaming 모델은 **파일명이 완전히 같다**
-         * (encoder/decoder/joiner-epoch-99-avg-1.int8.onnx + tokens.txt). 그래서 이름만 보면
-         * 예전에 받아둔 streaming 모델이 그대로 통과해 오프라인 인식기에 물리고, 실패하거나
-         * 엉뚱한 결과를 낸다. 표식이 없거나 다르면 '모델 없음'으로 보고 다시 받게 한다.
+         * STT 모델을 여러 번 바꿔 왔는데(streaming zipformer → offline zipformer → whisper)
+         * 파일명이 겹치거나 구조가 달라, 이름만 보면 예전에 받아둔 모델이 그대로 통과해 엉뚱한
+         * 인식기에 물린다. 표식이 없거나 다르면 '모델 없음'으로 보고 다시 받게 한다.
          */
-        const val MODEL_ID = "offline-zipformer-korean-2024-06-24"
+        const val MODEL_ID = "whisper-base-multilingual-int8"
         fun modelIdFile(ctx: Context): File = File(modelDir(ctx), ".model-id")
 
-        /** 모델 파일 자동 탐색(파일명이 버전마다 달라 키워드로 찾고 int8 우선). 없으면 null. */
+        /** 모델 파일 자동 탐색(int8 우선). 표식·필수 파일이 없으면 null. */
         fun findModel(ctx: Context): Model? {
             if (modelIdFile(ctx).takeIf { it.isFile }?.readText()?.trim() != MODEL_ID) return null
             val files = modelDir(ctx).listFiles()?.toList() ?: return null
@@ -151,9 +151,9 @@ class Transcriber private constructor(private val recognizer: OfflineRecognizer)
                     .firstOrNull()
             val encoder = pick("encoder") ?: return null
             val decoder = pick("decoder") ?: return null
-            val joiner = pick("joiner") ?: return null
-            val tokens = files.firstOrNull { it.name == "tokens.txt" } ?: return null
-            return Model(encoder, decoder, joiner, tokens)
+            // whisper 토큰 파일명은 base-tokens.txt (모델마다 접두사가 다를 수 있어 접미사로 찾는다).
+            val tokens = files.firstOrNull { it.name.endsWith("tokens.txt") } ?: return null
+            return Model(encoder, decoder, tokens)
         }
 
         fun isModelAvailable(ctx: Context): Boolean = findModel(ctx) != null
@@ -178,20 +178,19 @@ class Transcriber private constructor(private val recognizer: OfflineRecognizer)
                 val config = OfflineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = OfflineModelConfig(
-                        transducer = OfflineTransducerModelConfig(
+                        whisper = OfflineWhisperModelConfig(
                             encoder = model.encoder.absolutePath,
                             decoder = model.decoder.absolutePath,
-                            joiner = model.joiner.absolutePath,
+                            language = "ko",        // 한국어 고정(자동 감지보다 빠르고 안정적)
+                            task = "transcribe",    // 번역 아님, 그대로 받아쓰기
                         ),
                         tokens = model.tokens.absolutePath,
                         numThreads = 2,
-                        modelType = "transducer",
+                        modelType = "whisper",
                     ),
-                    // greedy 는 매 스텝 1등만 남겨 앞선 오인식을 되돌리지 못한다. 빔 탐색은
-                    // 후보를 여러 개 끌고 가며 뒤 문맥으로 고를 수 있어 한국어처럼 어미가
-                    // 뒤에 붙는 언어에서 특히 유리하다. 느려지지만 배치 전사에는 여유가 충분하다.
-                    decodingMethod = "modified_beam_search",
-                    maxActivePaths = 4,
+                    // whisper 는 자기 디코더로 문장을 생성한다 — transducer 의 beam search 파라미터가
+                    // 아니라 greedy 를 쓴다(실측 결과도 greedy 로 충분).
+                    decodingMethod = "greedy_search",
                 )
                 Transcriber(OfflineRecognizer(assetManager = null, config = config))
             } catch (t: Throwable) {

@@ -73,7 +73,7 @@
 <p>아래 기능을 쓸 때만 인터넷 통신이 일어납니다. 어느 경우에도 녹음 오디오와 전사 결과는 전송되지 않습니다.</p>
 <ul>
   <li><strong>지도(OpenStreetMap):</strong> ‘위치 기반 녹음’의 지도 화면은 OpenStreetMap 타일을 사용하며, 지도를 표시하기 위해 타일 이미지를 내려받습니다. 이때 <strong>보고 있는 지도 영역의 타일 좌표</strong>가 타일 서버에 전달됩니다(현재 위치 주변으로 지도를 열면 그 주변 영역이 됩니다). 저장된 녹음 장소 좌표 자체를 전송하지는 않습니다.</li>
-  <li><strong>음성인식 모델 다운로드(Hugging Face):</strong> ‘말한 내용으로 검색’을 켤 때 모델 파일(약 76MB)을 내려받습니다. 다운로드 요청 외의 사용자 데이터는 보내지 않습니다.</li>
+  <li><strong>음성인식 모델 다운로드(Hugging Face):</strong> ‘말한 내용으로 검색’을 켤 때 모델 파일(약 153MB)을 내려받습니다. 다운로드 요청 외의 사용자 데이터는 보내지 않습니다.</li>
   <li><strong>결제(Google Play 결제):</strong> Pro 구매·복원은 Google Play 결제로 처리되며 결제 정보는 Google 이 처리합니다. 개발자는 결제 수단 정보를 받지 않습니다.</li>
 </ul>
 <p>위 서비스들의 데이터 처리에는 각 제공자의 방침이 적용됩니다.</p>
@@ -151,7 +151,7 @@ This policy explains what data the App uses and how it is handled.</p>
 <p>Network access happens only when you use the features below. In none of these cases are your recordings or transcripts transmitted.</p>
 <ul>
   <li><strong>Maps (OpenStreetMap):</strong> The map screen for "Location-based recording" uses OpenStreetMap tiles and downloads tile images to render the map. This sends <strong>the tile coordinates of the map area you are viewing</strong> to the tile server (if you open the map centred on your position, that is the surrounding area). Your saved zone coordinates themselves are not transmitted.</li>
-  <li><strong>Speech model download (Hugging Face):</strong> Enabling "Search by what was said" downloads the model file (~76MB). Nothing beyond the download request is sent.</li>
+  <li><strong>Speech model download (Hugging Face):</strong> Enabling "Search by what was said" downloads the model file (~153MB). Nothing beyond the download request is sent.</li>
   <li><strong>Payments (Google Play Billing):</strong> Buying or restoring Pro is handled by Google Play Billing; Google processes the payment. The developer never receives your payment details.</li>
 </ul>
 <p>Each provider's own policy governs how they handle that traffic.</p>
