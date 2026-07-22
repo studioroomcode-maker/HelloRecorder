@@ -1,243 +1,102 @@
 package com.studioroomkr.hellorecorder
 
 import android.content.Context
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
-import java.nio.FloatBuffer
-import kotlin.math.cos
-import kotlin.math.sqrt
+import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig
+import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig
+import com.k2fsa.sherpa.onnx.OnlineSpeechDenoiser
+import com.k2fsa.sherpa.onnx.OnlineSpeechDenoiserConfig
 
 /**
- * GTCRN(ONNX) 기반 실시간 음성 향상(잡음 제거).
+ * GTCRN 신경망 잡음 제거 — '목소리 강조'(Pro).
  *
- *  - 16kHz mono. n_fft=512, hop=256, 윈도우 = sqrt(np.hanning(512)) (분석=합성).
- *  - STFT/iSTFT/overlap-add 는 직접 구현하고, 스펙트럼 향상만 GTCRN 모델이 한다.
- *  - 스트리밍: 캐시 텐서 3개(conv/tra/inter)를 프레임마다 이어준다.
- *  - 한 '녹음 구간'마다 reset() 으로 상태를 초기화하고, 같은 세션(모델)을 재사용한다.
- *  - overlap-add 특성상 출력은 입력보다 hop(256≈16ms)만큼 지연되며, finish 시 flush 로 잔여를 뺀다.
+ * ## 왜 sherpa 로 갈아탔나 (2026-07-20)
+ * 예전엔 Microsoft onnxruntime-android 의 Java API 로 gtcrn_simple.onnx 를 직접 돌리고
+ * STFT/OLA 를 손으로 구현했다. 그런데 STT 를 sherpa 로 옮기면서, 두 라이브러리가 **같은 이름의
+ * libonnxruntime.so 를 각자 요구**한다는 게 드러났다. 하나만 패키징할 수 있는데 요구 버전이 다르다:
  *
- * 모델/런타임 로드 실패 시 create() 가 null → 호출 측은 잡음제거 없이 진행(폴백).
- * 녹음(인코딩) 중에만 동작하므로 상시 비용은 없다.
+ *     libonnxruntime4j_jni.so(MS) 가 요구 : VERS_1.22.0
+ *     sherpa 의 libonnxruntime.so 가 제공 : VERS_1.24.3
+ *
+ * ELF 심볼 버전 노드가 어긋나 dlopen 이 실패한다. sherpa 것을 빼면 STT 가 죽고, MS 것을 빼면
+ * 이 기능이 죽는 — 어느 쪽도 성립하지 않았다(실제로 목소리 강조가 조용히 꺼져 있었다).
+ *
+ * sherpa 가 GTCRN 을 내장 지원하므로 그쪽으로 옮겨 **네이티브 런타임을 하나로 통일**했다.
+ * 버전 충돌이 구조적으로 사라지고, MS 의존성과 손으로 짠 FFT/OLA 가 통째로 없어진다.
+ * 모델은 쓰던 gtcrn_simple.onnx 그대로라 음질 성격은 유지된다.
+ *
+ * ## 계약
+ * 공개 API(reset/process/flush/close)는 예전과 같다 — AudioEngine 은 손대지 않는다.
+ * sherpa 는 float([-1,1]) 를 다루므로 경계에서만 int16 과 변환한다.
+ * process() 반환 길이가 입력과 다를 수 있는 것(프레임 경계)도 예전과 동일하다.
  */
-class SpeechEnhancer private constructor(
-    private val env: OrtEnvironment,
-    private val session: OrtSession,
-) {
-    // sqrt-Hann (numpy: 분모가 N-1). 모델 학습/익스포트 윈도우와 동일해야 함.
-    private val window = DoubleArray(NFFT) { sqrt(0.5 - 0.5 * cos(2.0 * Math.PI * it / (NFFT - 1))) }
+class SpeechEnhancer private constructor(private val denoiser: OnlineSpeechDenoiser) {
 
-    private val fft = Fft(NFFT)
-
-    // STFT 입력 슬라이딩(직전 256 + 신규 256 = 512), iSTFT overlap-add 누적
-    private val inBuf = DoubleArray(NFFT)
-    private val ola = DoubleArray(NFFT)
-    private val hopIn = DoubleArray(HOP)
-    private var hopFill = 0
-
-    // FFT 작업 버퍼
-    private val re = DoubleArray(NFFT)
-    private val im = DoubleArray(NFFT)
-    private val mix = FloatArray(BINS * 2)   // (257,2) 평탄화
-
-    // GTCRN 스트리밍 캐시(float32)
-    private val convCache = FloatArray(2 * 1 * 16 * 16 * 33)
-    private val traCache = FloatArray(2 * 3 * 1 * 1 * 16)
-    private val interCache = FloatArray(2 * 1 * 33 * 16)
-
-    /** 새 녹음 구간 시작 시 호출 — 스트리밍 상태/캐시 초기화. */
+    /** 새 녹음 구간 시작 — 이전 구간의 내부 상태가 새 구간으로 새지 않게 한다. */
     fun reset() {
-        java.util.Arrays.fill(inBuf, 0.0)
-        java.util.Arrays.fill(ola, 0.0)
-        hopFill = 0
-        java.util.Arrays.fill(convCache, 0f)
-        java.util.Arrays.fill(traCache, 0f)
-        java.util.Arrays.fill(interCache, 0f)
+        try { denoiser.reset() } catch (_: Throwable) {}
     }
 
     /**
-     * 임의 길이 PCM 을 잡음제거해 반환. 반환 길이는 hop 의 배수(완성된 프레임만큼).
-     * 입력보다 hop 만큼 지연된 결과가 나오며, 마지막 잔여는 flush() 로 뺀다.
+     * 잡음 제거 적용. 아직 프레임이 안 찼으면 빈 배열을 돌려준다(호출부는 이어 붙이면 된다).
      */
-    fun process(pcm: ShortArray, len: Int): ShortArray {
-        val completedHops = (hopFill + len) / HOP
-        if (completedHops == 0) {
-            for (i in 0 until len) hopIn[hopFill++] = pcm[i].toDouble()
-            return EMPTY
-        }
-        val out = ShortArray(completedHops * HOP)
-        var outPos = 0
-        for (i in 0 until len) {
-            hopIn[hopFill++] = pcm[i].toDouble()
-            if (hopFill == HOP) {
-                processHop(out, outPos)
-                outPos += HOP
-                hopFill = 0
-            }
-        }
-        return out
+    fun process(pcm: ShortArray, len: Int): ShortArray = try {
+        val f = FloatArray(len)
+        for (i in 0 until len) f[i] = pcm[i] / SCALE
+        toShorts(denoiser.run(f, SAMPLE_RATE).samples)
+    } catch (_: Throwable) {
+        // 한 버퍼가 실패했다고 녹음을 잃지는 않는다 — 이 구간은 원음 그대로 흘린다.
+        pcm.copyOf(len)
     }
 
-    /** 구간 끝에서 버퍼에 남은 꼬리를 0 으로 밀어내 마저 출력. */
-    fun flush(): ShortArray {
-        // 남은 부분 채움(0 패딩) + OLA 잔여 1프레임을 밀어내기 위해 두 번 처리
-        val out = ShortArray(2 * HOP)
-        var outPos = 0
-        // 1) 부분 hop 을 0 으로 채워 한 프레임 완성
-        while (hopFill < HOP) hopIn[hopFill++] = 0.0
-        processHop(out, outPos); outPos += HOP; hopFill = 0
-        // 2) OLA 에 남은 후반부를 밀어내기 위해 0 hop 하나 더
-        while (hopFill < HOP) hopIn[hopFill++] = 0.0
-        processHop(out, outPos); hopFill = 0
-        return out
-    }
-
-    private fun processHop(out: ShortArray, outPos: Int) {
-        // 슬라이딩 윈도우: [이전 256 | 신규 256]
-        System.arraycopy(inBuf, HOP, inBuf, 0, NFFT - HOP)
-        for (i in 0 until HOP) inBuf[NFFT - HOP + i] = hopIn[i]
-
-        // STFT: [-1,1] 정규화(모델 학습 스케일) + 윈도우 적용 후 FFT
-        for (i in 0 until NFFT) { re[i] = (inBuf[i] / SCALE) * window[i]; im[i] = 0.0 }
-        fft.transform(re, im, false)
-        for (k in 0 until BINS) { mix[k * 2] = re[k].toFloat(); mix[k * 2 + 1] = im[k].toFloat() }
-
-        // GTCRN 추론 (실패하면 향상 없이 원본 통과)
-        val enhanced = runModel()
-        if (enhanced != null) {
-            // 257 빈 → 512 에르미트 대칭 복원
-            for (k in 0 until BINS) { re[k] = enhanced[k * 2].toDouble(); im[k] = enhanced[k * 2 + 1].toDouble() }
-            for (k in BINS until NFFT) { re[k] = re[NFFT - k]; im[k] = -im[NFFT - k] }
-            fft.transform(re, im, true)   // inverse (1/N 스케일 포함)
-        } else {
-            // 폴백: 원본 STFT 그대로 역변환 → 사실상 원본 복원
-            for (k in BINS until NFFT) { re[k] = re[NFFT - k]; im[k] = -im[NFFT - k] }
-            fft.transform(re, im, true)
-        }
-
-        // 합성 윈도우 + overlap-add
-        for (i in 0 until NFFT) ola[i] += re[i] * window[i]
-        // 앞 hop 출력 ([-1,1] → int16 복원)
-        for (i in 0 until HOP) {
-            val v = ola[i] * SCALE
-            out[outPos + i] = when {
-                v > 32767.0 -> 32767
-                v < -32768.0 -> -32768
-                else -> Math.round(v).toInt().toShort()
-            }
-        }
-        // OLA 한 칸 전진
-        System.arraycopy(ola, HOP, ola, 0, NFFT - HOP)
-        java.util.Arrays.fill(ola, NFFT - HOP, NFFT, 0.0)
-    }
-
-    /** GTCRN 한 프레임 추론. enh(257*2) 반환, 실패 시 null. */
-    private fun runModel(): FloatArray? {
-        // 네이티브 리소스(텐서·Result)는 매 프레임 생성된다. session.run() 또는 출력 접근에서
-        // 예외가 나도 누수되지 않도록 finally 에서 항상 닫는다(이전엔 성공 경로에서만 닫았음).
-        var mixT: OnnxTensor? = null
-        var convT: OnnxTensor? = null
-        var traT: OnnxTensor? = null
-        var interT: OnnxTensor? = null
-        var res: OrtSession.Result? = null
-        return try {
-            mixT = OnnxTensor.createTensor(env, FloatBuffer.wrap(mix), longArrayOf(1, BINS.toLong(), 1, 2))
-            convT = OnnxTensor.createTensor(env, FloatBuffer.wrap(convCache), longArrayOf(2, 1, 16, 16, 33))
-            traT = OnnxTensor.createTensor(env, FloatBuffer.wrap(traCache), longArrayOf(2, 3, 1, 1, 16))
-            interT = OnnxTensor.createTensor(env, FloatBuffer.wrap(interCache), longArrayOf(2, 1, 33, 16))
-            val inputs = mapOf(
-                "mix" to mixT, "conv_cache" to convT,
-                "tra_cache" to traT, "inter_cache" to interT,
-            )
-            res = session.run(inputs)
-            val enh = FloatArray(BINS * 2)
-            (res.get("enh").get() as OnnxTensor).floatBuffer.get(enh)
-            (res.get("conv_cache_out").get() as OnnxTensor).floatBuffer.get(convCache)
-            (res.get("tra_cache_out").get() as OnnxTensor).floatBuffer.get(traCache)
-            (res.get("inter_cache_out").get() as OnnxTensor).floatBuffer.get(interCache)
-            enh
-        } catch (_: Throwable) {
-            null
-        } finally {
-            try { res?.close() } catch (_: Throwable) {}
-            try { mixT?.close() } catch (_: Throwable) {}
-            try { convT?.close() } catch (_: Throwable) {}
-            try { traT?.close() } catch (_: Throwable) {}
-            try { interT?.close() } catch (_: Throwable) {}
-        }
+    /** 구간 끝에서 내부에 남은 꼬리를 뽑아낸다. */
+    fun flush(): ShortArray = try {
+        toShorts(denoiser.flush().samples)
+    } catch (_: Throwable) {
+        EMPTY
     }
 
     fun close() {
-        try { session.close() } catch (_: Throwable) {}
+        try { denoiser.release() } catch (_: Throwable) {}
+    }
+
+    private fun toShorts(samples: FloatArray): ShortArray {
+        if (samples.isEmpty()) return EMPTY
+        val out = ShortArray(samples.size)
+        for (i in samples.indices) {
+            // 신경망 출력이 [-1,1] 을 살짝 넘을 수 있다 → 클리핑으로 래핑(찢어지는 소리) 방지.
+            out[i] = (samples[i] * SCALE).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        return out
     }
 
     companion object {
-        private const val NFFT = 512
-        private const val HOP = 256
-        private const val BINS = 257   // NFFT/2 + 1
-        private const val SCALE = 32768.0   // int16 ↔ [-1,1] 정규화
+        private const val SAMPLE_RATE = 16_000
+        private const val SCALE = 32768.0f   // int16 ↔ [-1,1] 정규화
         private val EMPTY = ShortArray(0)
 
-        /** 모델 로드. 실패(에셋 없음/ONNX 오류 등)하면 null. */
+        /**
+         * 마지막 create() 실패 이유. 예전엔 예외를 통째로 삼켜서, 기능이 꺼진 것과
+         * '효과가 약한 것'이 구분되지 않았다 — 실제로 그 탓에 고장을 한참 못 알아챘다.
+         */
+        @Volatile var lastCreateError: String? = null
+            private set
+
+        /** 모델 로드. 실패(에셋 없음·네이티브 오류 등)하면 null. */
         fun create(context: Context): SpeechEnhancer? = try {
-            val bytes = context.assets.open("gtcrn_simple.onnx").use { it.readBytes() }
-            val env = OrtEnvironment.getEnvironment()
-            val opts = OrtSession.SessionOptions().apply {
-                setIntraOpNumThreads(1)   // 절전: 단일 스레드
-            }
-            val session = env.createSession(bytes, opts)
-            SpeechEnhancer(env, session)
-        } catch (_: Throwable) { null }
-    }
-
-    /** 2의 거듭제곱 크기 복소 FFT (반복형 Cooley-Tukey, in-place). */
-    private class Fft(private val n: Int) {
-        private val rev = IntArray(n)
-
-        init {
-            var log = 0
-            while ((1 shl log) < n) log++
-            for (i in 0 until n) {
-                var x = i; var r = 0
-                for (b in 0 until log) { r = (r shl 1) or (x and 1); x = x shr 1 }
-                rev[i] = r
-            }
-        }
-
-        fun transform(re: DoubleArray, im: DoubleArray, inverse: Boolean) {
-            for (i in 0 until n) {
-                val j = rev[i]
-                if (j > i) {
-                    var t = re[i]; re[i] = re[j]; re[j] = t
-                    t = im[i]; im[i] = im[j]; im[j] = t
-                }
-            }
-            var len = 2
-            while (len <= n) {
-                val ang = 2.0 * Math.PI / len * if (inverse) 1.0 else -1.0
-                val wlenRe = cos(ang); val wlenIm = kotlin.math.sin(ang)
-                var i = 0
-                while (i < n) {
-                    var wRe = 1.0; var wIm = 0.0
-                    val half = len / 2
-                    for (k in 0 until half) {
-                        val aRe = re[i + k]; val aIm = im[i + k]
-                        val bRe0 = re[i + k + half]; val bIm0 = im[i + k + half]
-                        val bRe = bRe0 * wRe - bIm0 * wIm
-                        val bIm = bRe0 * wIm + bIm0 * wRe
-                        re[i + k] = aRe + bRe; im[i + k] = aIm + bIm
-                        re[i + k + half] = aRe - bRe; im[i + k + half] = aIm - bIm
-                        val nwRe = wRe * wlenRe - wIm * wlenIm
-                        wIm = wRe * wlenIm + wIm * wlenRe; wRe = nwRe
-                    }
-                    i += len
-                }
-                len = len shl 1
-            }
-            if (inverse) {
-                val inv = 1.0 / n
-                for (i in 0 until n) { re[i] *= inv; im[i] *= inv }
-            }
+            lastCreateError = null
+            val config = OnlineSpeechDenoiserConfig(
+                model = OfflineSpeechDenoiserModelConfig(
+                    // assetManager 를 넘기므로 APK 에셋에서 바로 읽는다(파일로 풀 필요 없음).
+                    gtcrn = OfflineSpeechDenoiserGtcrnModelConfig(model = "gtcrn_simple.onnx"),
+                    numThreads = 1,   // 절전: 상시 녹음 경로에서 도는 처리다
+                    debug = false,
+                    provider = "cpu",
+                )
+            )
+            SpeechEnhancer(OnlineSpeechDenoiser(assetManager = context.assets, config = config))
+        } catch (t: Throwable) {
+            lastCreateError = "${t::class.java.simpleName}: ${t.message}"
+            null
         }
     }
 }

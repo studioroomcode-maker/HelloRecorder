@@ -329,6 +329,37 @@ object Theme {
             setOnClickListener { onClick() }
         }
 
+    /**
+     * 파일 행을 펼쳤을 때 나오는 액션 버튼(공유·라벨·카테고리·편집·삭제).
+     *
+     * 아이콘만 쓰는 이유: 예전엔 글자 알약이라 글자 수대로 폭이 달라(‘카테고리’ 4자 vs ‘편집’ 2자)
+     * 간격이 들쭉날쭉했고, 5개를 가로로 늘어놓으면 화면을 넘어가 ‘삭제’가 잘려 나갔다.
+     * 아이콘은 폭이 같아 weight 로 균등 분할하면 간격이 저절로 맞고 5개가 다 들어온다.
+     *
+     * 아이콘만 남으므로 contentDescription 은 필수다(TalkBack 이 읽을 유일한 단서).
+     */
+    fun rowActionButton(
+        ctx: Context,
+        label: String,
+        danger: Boolean = false,
+        onClick: () -> Unit,
+    ): TextView = TextView(ctx).apply {
+        text = I18n.t(label)
+        isAllCaps = false
+        setTextColor(if (danger) NEGATIVE else TEXT_MUTED)
+        textSize = 12f                     // 5개를 균등 분할해도 '카테고리' 4자가 들어가는 크기
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 1
+        // 세로 패딩을 낮게 — 기존 글자 알약(9dp)보다 납작하게 눌러 행이 덜 부해 보이게.
+        setPadding(ctx.dp(2f), ctx.dp(6f), ctx.dp(2f), ctx.dp(6f))
+        background = pillBackground(ctx, SURFACE_ALT, null)
+        isClickable = true
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { setMargins(ctx.dp(3f), ctx.dp(2f), ctx.dp(3f), ctx.dp(2f)) }
+    }
+
     /** 텍스트/버튼 앞에 단색 아이콘(벡터)을 붙이고 지정 색으로 틴트. */
     fun setLeadingIcon(ctx: Context, view: TextView, iconRes: Int, tint: Int, sizeDp: Int = 18) {
         val d = ContextCompat.getDrawable(ctx, iconRes)?.mutate() ?: return

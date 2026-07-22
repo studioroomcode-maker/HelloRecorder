@@ -75,6 +75,43 @@ object Diagnostics {
         return sb.toString()
     }
 
+    /**
+     * 음성 엔진이 실제로 뜨는지 한 번 만들어 보고 결과를 적는다. 실패면 이유까지.
+     *
+     * ⚠️ report() 와 분리한 이유: 이 점검은 ONNX 인식기를 실제로 **생성**하므로 무겁다
+     * (STT 모델은 로드에 수백 ms + 네이티브 힙). report() 는 앱 시작 시 설정 화면을 그리며
+     * 즉시 호출되는데, 거기에 이 무거운 초기화를 끼워 넣었다가 앱 시작이 막혔다.
+     * 그래서 사용자가 '음성 엔진 점검' 버튼을 누를 때만, 백그라운드 스레드에서 돌린다.
+     */
+    fun engineReport(ctx: Context): String {
+        val sb = StringBuilder()
+        sb.appendLine("[음성 엔진 실제 로드]")
+        sb.appendLine("- 목소리 강조(GTCRN): ${enhancerStatus(ctx)}")
+        sb.appendLine("- 전사기(STT): ${transcriberStatus(ctx)}")
+        return sb.toString()
+    }
+
+    private fun enhancerStatus(ctx: Context): String {
+        val e = SpeechEnhancer.create(ctx)
+        return if (e != null) {
+            e.close()
+            "정상"
+        } else {
+            "실패 — ${SpeechEnhancer.lastCreateError ?: "원인 불명"}"
+        }
+    }
+
+    private fun transcriberStatus(ctx: Context): String {
+        if (!SttModel.isAvailable(ctx)) return "모델 없음(미설치)"
+        val t = Transcriber.create(ctx)
+        return if (t != null) {
+            t.close()
+            "정상"
+        } else {
+            "실패 — ${Transcriber.lastCreateError ?: "원인 불명"}"
+        }
+    }
+
     private fun indexedCount(ctx: Context): Int =
         try { TranscriptStore.indexedFileCount(ctx) } catch (_: Exception) { -1 }
 }

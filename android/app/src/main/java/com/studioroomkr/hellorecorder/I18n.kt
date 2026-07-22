@@ -105,6 +105,24 @@ object I18n {
         "녹음하려면 설정에서 마이크 권한을 허용해 주세요." to
             "To record, please allow the microphone permission in Settings.",
         "설정 열기" to "Open settings",
+        // ── 단건 전사(재생 화면) ──
+        "이 녹음 전사하기" to "Transcribe this recording",
+        "전사 중…" to "Transcribing…",
+        "이 녹음은 아직 전사되지 않았습니다. 지금 만들면 말한 내용으로 찾을 수 있어요." to
+            "This recording hasn't been transcribed yet. Transcribe it to search by what was said.",
+        "기기 안에서 처리 중입니다. 녹음 길이에 따라 몇 초~몇 분 걸립니다." to
+            "Processing on your device. This takes seconds to minutes depending on length.",
+        "전사할 말소리를 찾지 못했습니다. 조용한 녹음일 수 있어요." to
+            "No speech was found to transcribe — this recording may be silent.",
+        "말한 내용으로 찾기(자동 전사)는 Pro 전용입니다." to
+            "Search by what was said (auto transcription) is a Pro feature.",
+        "음성 인식 모델을 불러오지 못했습니다. 설정에서 모델을 다시 받아 주세요." to
+            "Couldn't load the speech model. Please download it again in Settings.",
+        "녹음 파일을 찾을 수 없습니다." to "The recording file could not be found.",
+        "전사에 실패했습니다." to "Transcription failed.",
+        "음성 인식 모델이 아직 없습니다. 설정 → 녹음 감도에서 모델을 먼저 받아 주세요." to
+            "The speech model isn't installed yet. Download it first in Settings → Recording sensitivity.",
+
         "알림이 꺼져 있습니다" to "Notifications are off",
         "알림이 꺼져 있어 '녹음 중' 표시가 나타나지 않습니다. 녹음 중인지 확인하기 어려우니 알림을 켜는 것을 권합니다." to
             "Notifications are off, so the \"Recording\" indicator won't appear. " +

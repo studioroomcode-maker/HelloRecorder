@@ -7,37 +7,47 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * STT 모델(한국어 Zipformer int8, 총 ~133MB) 인앱 다운로드 관리.
+ * STT 모델(Whisper base int8, 총 ~153MB) 인앱 다운로드 관리.
  *
- *  - 소스: 허깅페이스 공식 k2-fsa 저장소에서 int8 파일 4개를 개별 다운로드
- *    (아카이브가 아니라 압축 해제 코드가 필요 없고, fp32 등 불필요한 285MB 를 받지 않는다).
+ *  - 소스: 허깅페이스에서 int8 파일 3개(encoder·decoder·tokens)를 개별 다운로드
+ *    (아카이브가 아니라 압축 해제 코드가 필요 없고, fp32 원본을 받지 않는다).
  *  - 시스템 DownloadManager 사용: 앱이 종료돼도 시스템이 이어받기·재시도·진행률 알림 처리.
- *  - 원자성: stt-model-tmp/ 에 받고 4개 모두 성공했을 때만 stt-model/ 로 이동.
+ *  - 원자성: stt-model-tmp/ 에 받고 셋 다 성공·검증됐을 때만 stt-model/ 로 이동.
  *    Transcriber/TranscribeWorker 는 완성된 stt-model/ 만 본다.
  *  - 완료 감지: SttModelReceiver(ACTION_DOWNLOAD_COMPLETE) + MainActivity.onResume 재확인.
  */
 object SttModel {
 
+    // Whisper base (다국어, int8).
+    //
+    // 모델 변천: streaming zipformer → offline zipformer(KsponSpeech) → **whisper base**.
+    // KsponSpeech 모델은 깨끗한 방송·대화 음성으로 학습돼, 이 앱의 실제 오디오(원거리·잡음
+    // 환경의 상시 녹음)에서 인식률이 크게 떨어졌다. 근접 또렷 발화만 되면 상시 녹음 앱의
+    // 의미가 없다. Whisper 는 온갖 잡음 환경 데이터로 학습돼 원거리·잡음에 강건하고,
+    // 띄어쓰기까지 해 준다. 실측 비교에서 확연히 나았다.
+    // 대가: 다운로드가 76MB → ~153MB, 속도도 느리다(RTF PC 0.15, 폰 ~0.5). 다만 전사는
+    // 충전 중 배치라 속도는 문제되지 않는다.
+    //
+    // Whisper 는 30초를 넘는 입력의 초과분을 버리므로, Transcriber 가 25초 미만 구간으로
+    // 잘라 넣는다(SEG_MAX 참고).
     private const val BASE =
-        "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/main/"
+        "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/main/"
     /**
      * 받을 파일 + 무결성 기준(크기·SHA-256). DownloadManager 의 "성공"은 HTTP 전송 완료를
      * 뜻할 뿐, 내용이 올바른지는 보장하지 않는다(프록시 에러페이지·잘린 파일·저장소 교체본이
      * 그대로 통과 가능). 정식 폴더로 옮기기 전에 이 기준으로 검증한다.
-     * 값은 허깅페이스 k2-fsa 저장소 실측(LFS oid = 파일 SHA-256, tokens.txt 는 직접 계산).
      */
     private data class ModelFile(val name: String, val size: Long, val sha256: String)
+    // 크기·SHA-256 은 HuggingFace API 실측(LFS oid). tokens 는 oid 가 없어 직접 계산했다.
     private val FILES = listOf(
-        ModelFile("encoder-epoch-99-avg-1.int8.onnx", 126_968_852,
-            "8d0b1aa24fbedd4e3948564ab7facd151b8ce9b0c48fc987c541de2de3af5697"),
-        ModelFile("decoder-epoch-99-avg-1.int8.onnx", 2_844_692,
-            "68ea197936aabd249f38b53a87c775422bca64428ad4427d0e6e8092593e71fb"),
-        ModelFile("joiner-epoch-99-avg-1.int8.onnx", 2_581_421,
-            "128b80a66a1f718488af8560f9d15895109b99ff3e573f0a0130e03774ef1ced"),
-        ModelFile("tokens.txt", 60_246,
-            "016bdf0965029263b7ad01b742366ee542ef0bef38261510e8176ff6f2e9e668"),
+        ModelFile("base-encoder.int8.onnx", 29_120_534,
+            "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"),
+        ModelFile("base-decoder.int8.onnx", 130_672_026,
+            "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"),
+        ModelFile("base-tokens.txt", 816_730,
+            "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"),
     )
-    const val TOTAL_MB = 133
+    const val TOTAL_MB = 153
     private const val TMP_SUBDIR = "stt-model-tmp"
 
     fun isAvailable(ctx: Context): Boolean = Transcriber.isModelAvailable(ctx)
@@ -139,12 +149,20 @@ object SttModel {
 
         // 검증 통과 → tmp 에서 정식 폴더로 이동(같은 볼륨이라 rename 원자적)
         val dst = Transcriber.modelDir(ctx).apply { mkdirs() }
+        // 옮기기 전에 버전 표식을 지운다 — 중간에 실패해도 옛 모델과 새 파일이 섞인 폴더가
+        // '사용 가능'으로 보이지 않게 한다. 또한 예전 zipformer 파일들이 남아 있을 수 있어
+        // 새로 받은 것만 남도록 폴더를 비운다(whisper 는 파일명이 달라 그냥 두면 공존한다).
+        Transcriber.modelIdFile(ctx).delete()
+        dst.listFiles()?.forEach { it.delete() }
         var ok = true
         for (mf in FILES) {
             val out = File(dst, mf.name)
             if (out.exists()) out.delete()
             if (!File(tmp, mf.name).renameTo(out)) { ok = false; break }
         }
+        // 전부 옮겨진 뒤에만 표식을 남긴다 — 이게 있어야 findModel 이 통과시킨다.
+        if (ok) runCatching { Transcriber.modelIdFile(ctx).writeText(Transcriber.MODEL_ID) }
+            .onFailure { ok = false }
         Prefs.setSttDownloadIds(ctx, emptyList())
         cleanupTmp(ctx)
         if (!ok) {
